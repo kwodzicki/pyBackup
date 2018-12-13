@@ -11,7 +11,7 @@ setuptools.setup(
   author_email     = "krwodzicki@gmail.com",
   version          = "0.0.1",
   packages         = setuptools.find_packages(),
-  install_requires = [ ],
+  install_requires = ['Pillow', 'pystray', 'PySide'],
   scripts          = ['bin/pyBackup'],
   zip_safe         = False
 );
