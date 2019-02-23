@@ -18,5 +18,7 @@
 	"disk_size":0,
 	"disk_UUID":"",
     "date_FMT": "%Y-%m-%dT%H_%M_%S",
-	"auto_backup":false
+	"auto_backup":false,
+	"cron_cmd":"pyBackup_cron",
+	"cron_cmt":"Cron job for hourly backups"
 }

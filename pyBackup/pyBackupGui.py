@@ -136,7 +136,7 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
     '''
     if not self.is_root:                                                        # If not running as root
       disabledMessage().exec_();                                                # Display a dialog saying cannot do unles root
-      # return;
+      return;
     if not self.backupThread:                                                   # If there is NOT a backup thread running
       self.backupButton.setText( 'Cancel Backup' );
       self.backupThread = Thread( target = self._backupThread );                # Initialize new thread
@@ -168,6 +168,16 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
     self.config['auto_backup'] = not self.config['auto_backup'];                # Set to opposit value
     if self.config['auto_backup']:
       self.autoButton.setText( self.autoBackupFMT.format('Enabled') )
+      cmd = os.path.join( utils._dir, self.config['cron_cmd'] );
+      cmd = "/usr/bin/env python3 {}".format( cmd )
+      job = my_cron.new( command = cmd, comment = self.config['cron_cmt'] )
+      job.every(1).hour();
+      my_cron.write();
     else:
       self.autoButton.setText( self.autoBackupFMT.format('Disabled') )
+      for job in my_cron:
+        if job.comment == self.config['cron_cmt']:
+          my_cron.remove(job);
+          my_cron.write();
+          break;
     utils.saveConfig( self.config );                                            # Update config file
