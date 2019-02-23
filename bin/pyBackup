@@ -5,7 +5,7 @@ from pystray import MenuItem;
 import pystray;
 
 from threading import Thread;
-from PySide.QtGui import QApplication;
+from PyQt5.QtWidgets import QApplication;
 from pyBackup.pyBackupGui import pyBackupGui;
 from pyBackup import icons;
  
@@ -43,6 +43,8 @@ for sig in [signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT]:
 menu  = ( MenuItem('Backup Now',                startBackup),
           MenuItem('Open pyBackup Preferences', prefs), 
           MenuItem('Quit',                      quit) )
+# icon = pystray.Icon('test', icon = main_image, menu = menu );
 icon = pystray.Icon('test', icon = main_image, menu = menu );
+print(icon, icon.HAS_MENU)
 icon.run( );
 main_image.close();

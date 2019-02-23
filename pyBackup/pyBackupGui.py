@@ -1,8 +1,9 @@
 import logging
 import os, shutil;
 
-from PySide.QtGui import QMainWindow, QWidget, QFileDialog, QPixmap, QLabel;
-from PySide.QtGui import QLineEdit, QPushButton, QGridLayout;
+from PyQt5.QtWidgets import QMainWindow, QWidget, QFileDialog, QLabel;
+from PyQt5.QtWidgets import QLineEdit, QPushButton, QGridLayout;
+from PyQt5.QtGui import QPixmap;
 
 # Imports for SHARPpy
 # from .widgets import QLogger, dateFrame, indicator;
