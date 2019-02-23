@@ -21,7 +21,7 @@ class rsyncBackup( object ):
     self.inProg_list = [];
     self.dst_dir     = None;
     self.prog_dir    = None;
-    self.src_dir     = '/home/kyle/';
+    self.src_dir     = '/';
     self.link_dir    = None;
     self.backup_size = None;
     self.progress    = 0.0;
