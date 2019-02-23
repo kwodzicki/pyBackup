@@ -1,26 +1,26 @@
 #!/usr/bin/env python
 
-import os, sys, json;
+import os, sys, shutil, json;
 from datetime import datetime;
 from subprocess import Popen, PIPE, STDOUT, DEVNULL;
 
-from .backup_rm import backup_rm;
-
 dir = os.path.dirname( os.path.abspath( __file__ ) )
+configFile = os.path.join(dir, 'config.json');
 
 class pyBackup( object ):
-  def __init__(self, config):
+  def __init__(self, config=None):
     super().__init__();
-
+    if config is None:
+      config = self.__initConfig();
     self.dateFMT     = "%Y-%V-%m-%d-%H%M%S";                                                 # Format for dates
     self.cmd         = ['rsync', '-a', '--stats'];                                           # Base command for rsync
     self.config      = config;
     self.backup_dir  = config['backup_dir'];
     self.exclude_dir = config['exclude'];
     self.latest_dir  = os.path.join( self.backup_dir, 'Latest' );                # Set the Latest link path in the backup directory
-    self.date_str    = datetime.utcnow().strftime( dateFMT );                    # Get current UTC time
-    self.dst_dir     = os.path.join( backup_dir, date_str )
-    self.prog_dir    = cur_backup_dir + '.inprogress';
+    self.date_str    = datetime.utcnow().strftime( self.dateFMT );                    # Get current UTC time
+    self.dst_dir     = os.path.join( self.backup_dir, self.date_str )
+    self.prog_dir    = self.dst_dir + '.inprogress';
     self.src_dir     = '/';
     self.dir_list    = self.__getDirList()
     self.backup_size = None;
@@ -39,6 +39,9 @@ class pyBackup( object ):
     self.backup_size = self.__getTransferSize( cmd );
     self.__removeDirs( );
     self.__transfer( cmd );
+    os.rename( self.prog_dir, self.dist_dir );
+    os.symlink( self.dst_dir, self.latest_dir );
+    self.__updateConfig();
   ##############################################################################
   def __getTransferSize(self, cmd):
     proc = Popen( cmd + ['-n', self.src_dir, self.prog_dir], 
@@ -47,7 +50,7 @@ class pyBackup( object ):
     line = proc.stdout.readline();
     while line:
       if 'total size is' in line.lower():
-        backup_size = ( line.split()[3].replace(',','') )
+        backup_size = int( line.split()[3].replace(',','') )
         break;
       line = proc.stdout.readline();
     proc.communicate();
@@ -66,11 +69,11 @@ class pyBackup( object ):
       line = proc.stdout.readline();                                            # Get another line from rsync command
     proc.communicate();                                                         # Close the PIPEs and everything
   ##############################################################################
-  def __getDirList( self. ):
+  def __getDirList( self ):
     '''Function to get list of directories in a directory.'''
     listdir, dirs = os.listdir( self.backup_dir ), [];                            # Get list of all files in directory and initialize dirs as list
     for dir in listdir:                                                           # Iterate over directories in listdir
-      tmp = os.path.join(in_dir, dir);                                            # Generate full file path
+      tmp = os.path.join( self.backup_dir, dir);                                  # Generate full file path
       if os.path.isdir(tmp) and not os.path.islink(tmp): dirs.append( tmp );      # If the path is a directory and it is NOT a link, then append it to the dirs list
     dirs.sort();                                                                  # Sort the dirs list
     return dirs;                                                                  # Return the dirs list
@@ -80,7 +83,7 @@ class pyBackup( object ):
       link_dir = os.readlink( self.latest_dir );                                # Read the link to the latest directory; will be used as linking directory. 
       os.remove( self.latest_dir );                                             # Delete the link
     else:
-      link_dir = dirs[-1];                                                      # Set link_dir to empty string and set the link age to 52 weeks. If an existing directory is newer than 52 weeks, this variable is updated to the shorter time
+      link_dir = self.dir_list[-1];                                              # Set link_dir to empty string and set the link age to 52 weeks. If an existing directory is newer than 52 weeks, this variable is updated to the shorter time
     return link_dir;
   ##############################################################################
   def __removeDirs( self ):
@@ -112,3 +115,21 @@ class pyBackup( object ):
           except:                                                               # on exception
             os.remove( path );                                                  # Try to remove file; may be symlink
       os.rmdir( dirPath );                                                      # Remove the top level (input) directory
+  ##############################################################################
+  def __initConfig(self):
+    with open(configFile, 'r') as fid:
+      config = json.load( fid );
+    config['backup_dir'] = input('Where do you want to backup to: ');
+    total, used, free = shutil.disk_usage( config['backup_dir'] );
+    config['drive_size'] = int( total * 0.9 );
+    return config;
+  ##############################################################################
+  def __updateConfig(self):
+    self.config['backup_size'] += self.backup_size;
+    self.config['last_backup']  = self.date_str
+    with open(configFile, 'w') as fid:
+      json.dump( self.config, fid );
+
+if __name__ == "__main__":
+  inst = pyBackup();
+  inst.run();
