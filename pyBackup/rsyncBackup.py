@@ -1,9 +1,11 @@
-import os, sys, shutil, json;
+import os, sys, shutil, re;
 from datetime import datetime;
 from subprocess import Popen, PIPE, STDOUT, DEVNULL;
 
-from . import utils;
+from pyBackup import utils;
 
+goodPattern = re.compile( r'(\s*(?:\d{1,3},?)*\s+(?:\d{1,3}\%))' );
+badPattern  = re.compile( r'[\(\)]' );
 
 class rsyncBackup( object ):
   def __init__(self):
@@ -15,15 +17,28 @@ class rsyncBackup( object ):
     self.exclude_dir = self.config['exclude'];
     self.latest_dir  = os.path.join( self.backup_dir, 'Latest' );                # Set the Latest link path in the backup directory
 
-    self.dir_list    = None;
+    self.dir_list    = [];
+    self.inProg_list = [];
     self.dst_dir     = None;
     self.prog_dir    = None;
-    self.src_dir     = '/';
+    self.src_dir     = '/home/kyle/';
     self.backup_size = None;
     self.progress    = 0.0;
     self.lock_file   = '/tmp/pyBackup.lock'
-  def test(self):
-    print( 'This is a test from rsyncBackup' )
+    self.statusTXT   = '';
+    self.__cancel    = False;
+  ##############################################################################
+  @property
+  def backup_dir(self):
+    return self.__backup_dir;
+  @backup_dir.setter
+  def backup_dir(self, value):
+    if not os.path.isdir( value ): os.makedirs( value );                        # If dirctory does NOT exist, create it
+    self.__backup_dir = value;                                                  # Set private variable
+  ##############################################################################
+  def cancel(self):
+    self.statusTXT = 'Canceling backup'
+    self.cancel    = True;
   ##############################################################################
   def backup(self):
     # Check if the 'Latest' link exists in the backup directory
@@ -31,82 +46,107 @@ class rsyncBackup( object ):
       raise Exception( 'Backup disk NOT set!' );                                # Raise exception
     elif not self.mountPoint:                                                   # If no mount point found, i.e, not mounted
         last_backup = datetime.strptime( 
-          self.config['last_backup'], self.config['dateFMT']
+          self.config['last_backup'], self.config['date_FMT']
         );                                                                      # Convert last backup date string to datetime object
         days_since = (datetime.utcnow() - last_backup).days;                    # Compute days since last backp
         self.config['days_since_last_backup'] = days_since;                     # Update days since last backup
         utils.saveConfig( self.config );                                        # Update config settings
         raise Exception( 'Backup disk NOT mounted!' );                          # Raise exception
 
-    if not os.path.isfile( self.lock_file ):
-      open( self.lock_file, 'w' ).close();                                      # Create lock file
-      date          = datetime.utcnow();                                        # Get current UTC date
-      date_str      = date.strftime( self.config['dateFMT']    );               # Format date to string
-      self.dir_list = self.__getDirList( self.backup_dir )
-      self.dst_dir  = os.path.join(  self.backup_dir, date_str );               # Set up destination directory
-      self.prog_dir = self.dst_dir + '.inprogress';                             # Set up progress directory
+    if os.path.isfile( self.lock_file ): return;                                # If lock file exists, return from method
 
-      cmd      = self.cmd;
-      link_dir = self.__getLinkDir();
-      cmd.append( '--link-dest={}'.format( link_dir ) );                        # Add link directory to cmd
+    open( self.lock_file, 'w' ).close();                                        # Create lock file
+    date          = datetime.utcnow();                                          # Get current UTC date
+    date_str      = date.strftime( self.config['date_FMT']    );                # Format date to string
 
-      ## Exclude directories
-      for dir in self.exclude_dir: cmd.append( '--exclude={}'.format( dir ) );  # Iterate over all exlude directories and append to cmd
-      cmd.append( '--exclude={}'.format( self.backup_dir) );                    # Append src directory path as exclude
+    self.dir_list, self.inProg_list = self.__getDirList( self.backup_dir );     # Get list of vaild backup directories and those inprogress
+    self.dst_dir  = os.path.join(  self.backup_dir, date_str );                 # Set up destination directory
+    self.prog_dir = self.dst_dir + '.inprogress';                               # Set up progress directory
+    self.inProg_list.append( self.prog_dir );                                   # Append current in progress directory to that list
 
-      self.backup_size = self.__getTransferSize( cmd );
-      self.__removeDirs( );
-      self.__transfer( cmd );
-      os.rename( self.prog_dir, self.dist_dir );
+    cmd      = self.cmd;
+    link_dir = self.__getLinkDir();
+    if link_dir: cmd.append( '--link-dest={}'.format( link_dir ) );             # If a directory is returned, add link directory to cmd
+
+    ## Exclude directories
+    for dir in self.exclude_dir: cmd.append( '--exclude={}'.format( dir ) );    # Iterate over all exlude directories and append to cmd
+    cmd.append( '--exclude={}'.format( self.backup_dir) );                      # Append src directory path as exclude
+
+    self.backup_size = self.__getTransferSize( cmd );
+    self.__removeDirs( );
+    self.__transfer( cmd );
+    if not self.__cancel:                                                       # If backup has NOT been canceled
+      os.rename( self.prog_dir, self.dst_dir );
       os.symlink( self.dst_dir, self.latest_dir );
       self.config['backup_size'] += self.backup_size;
       self.config['last_backup']  = date_str;                                   # Update the last backup date string
       self.config['days_since_last_backup'] = 0;                                # Update days since last backup
       utils.saveConfig( self.config );                                          # Update the config file
-      os.remove( self.lock_file );                                              # Delete lock file
+    self.__cleanUp();
+    os.remove( self.lock_file );                                                # Delete lock file
+    self.statusTXT   = 'Finished'
+  ##############################################################################
+  def __cleanUp(self):
+    self.statusTXT = 'Cleaning up'
+    for dir in self.inProg_list:
+      if os.path.isdir( dir ):
+        shutil.rmtree( dir );
   ##############################################################################
   def __getTransferSize(self, cmd):
+    self.statusTXT = 'Calculating backup size'
     proc = Popen( cmd + ['-n', self.src_dir, self.prog_dir], 
       stdout = PIPE, stderr = STDOUT, 
       universal_newlines = True );
     line = proc.stdout.readline();
-    while line:
+    while line and (not self.__cancel):
       if 'total size is' in line.lower():
         backup_size = int( line.split()[3].replace(',','') )
         break;
       line = proc.stdout.readline();
+    if self.__cancel:
+      proc.terminate();
+      backup_size = None;
     proc.communicate();
     return backup_size;
   ##############################################################################
   def __transfer(self, cmd):
+    self.statusTXT = 'Backing up {}'.format(self.__size_fmt(self.backup_size));
     transfered = 0;
     proc = Popen( cmd + ['--progress', self.src_dir, self.prog_dir], 
       stdout = PIPE, stderr = STDOUT, 
       universal_newlines = True );
     line = proc.stdout.readline();                                              # Read first line form stdout
-    while line:                                                                 # While line is NOT empty
-      if '100%' in line:                                                        # Check for 100% in line
-        transfered += int( line.split()[0].replace(',','') );                   # Get size of transfered file and subtract it from the remaining transfer size
-        progress    = transfered / self.backup_size;
+    while line and (not self.__cancel):                                         # While line is NOT empty
+      if goodPattern.search(line) and (not badPattern.search(line)):            # Check if line matches criteria
+        transfered   += int( line.split()[0].replace(',','') );                 # Get size of transfered file and subtract it from the remaining transfer size
+        self.progress = 100.0 * transfered / self.backup_size;
       line = proc.stdout.readline();                                            # Get another line from rsync command
+    if self.cancel:
+      proc.terminate();
     proc.communicate();                                                         # Close the PIPEs and everything
   ##############################################################################
   def __getDirList( self, backup_dir ):
     '''Function to get list of directories in a directory.'''
-    listdir, dirs = os.listdir( backup_dir ), [];                               # Get list of all files in directory and initialize dirs as list
+    listdir, dirs, inprog = os.listdir( backup_dir ), [], [];                   # Get list of all files in directory and initialize dirs as list
     for dir in listdir:                                                         # Iterate over directories in listdir
       tmp = os.path.join( backup_dir, dir);                                     # Generate full file path
-      if os.path.isdir(tmp) and not os.path.islink(tmp): dirs.append( tmp );    # If the path is a directory and it is NOT a link, then append it to the dirs list
+      if os.path.isdir(tmp) and (not os.path.islink(tmp)):
+        if '.inprogress' in dir:
+          inprog.append( tmp );
+        else:
+          dirs.append( tmp )
     dirs.sort();                                                                # Sort the dirs list
-    return dirs;                                                                # Return the dirs list
+    return dirs, inprog;                                                        # Return the dirs list
   ##############################################################################
   def __getLinkDir(self):
     if os.path.lexists( self.latest_dir ):                                      # If the latest directory exists
       link_dir = os.readlink( self.latest_dir );                                # Read the link to the latest directory; will be used as linking directory. 
       os.remove( self.latest_dir );                                             # Delete the link
-    else:
-      link_dir = self.dir_list[-1];                                              # Set link_dir to empty string and set the link age to 52 weeks. If an existing directory is newer than 52 weeks, this variable is updated to the shorter time
-    return link_dir;
+    elif len(self.dir_list) > 0:                                                # If there are directories in the dir_list attribute
+      link_dir = self.dir_list[-1];                                             # Set link_dir to empty string and set the link age to 52 weeks. If an existing directory is newer than 52 weeks, this variable is updated to the shorter time
+    else:                                                                       # Else
+      return None;                                                              # Return None value
+    return link_dir;                                                            # Return link_dir
   ##############################################################################
   def __removeDirs( self ):
     '''
@@ -123,18 +163,41 @@ class rsyncBackup( object ):
     Outputs:
       Returns the size of files deleted.
     '''
-    while (self.config['backup_size']+self.backup_size) > self.config['drive_size']: # While the size of the current backup plus all other backups is larger than the drive size
-      for root, dirs, files in os.walk( self.dir_list.pop(0), topdown=False ):  # Walk the directory tree
-        for file in files:                                                      # Iterate over all files
-          path = os.path.join( root, file );                                    # Build the full file path
-          info = os.lstat( path );                                              # Get information about file
-          if info.st_nlink == 1: self.config['backup_size'] -= info.st_size;    # If file has only one (1) inode link, then subtract file size from config backup size
-          os.remove( path );                                                    # Delete the file
-        for dir in dirs:                                                        # Iterate over directories in root path
-          path = os.path.join( root, dir );                                     # Generate path to directory in root path
-          try:                                                                  # Try to...
-            os.rmdir( path );                                                   # Remove directory
-          except:                                                               # on exception
-            os.remove( path );                                                  # Try to remove file; may be symlink
-      os.rmdir( dirPath );                                                      # Remove the top level (input) directory
+    def localRemove():
+      used = self.config['backup_size']+self.backup_size;                       # Compute diskspace used by current backups and current one
+      while used > self.config['disk_size']:                                    # While the size of the current backup plus all other backups is larger than the drive size
+        for root, dirs, files in os.walk( self.dir_list.pop(0), topdown=False ):# Walk the directory tree
+          for file in files:                                                    # Iterate over all files
+            if self.__cancel: return;                                           # If __cancel is set, return
+            path = os.path.join( root, file );                                  # Build the full file path
+            info = os.lstat( path );                                            # Get information about file
+            if info.st_nlink == 1: self.config['backup_size'] -= info.st_size;  # If file has only one (1) inode link, then subtract file size from config backup size
+            os.remove( path );                                                  # Delete the file
+          for dir in dirs:                                                      # Iterate over directories in root path
+            if self.__cancel: return;                                           # If __cancel is set, return
+            path = os.path.join( root, dir );                                   # Generate path to directory in root path
+            try:                                                                # Try to...
+              os.rmdir( path );                                                 # Remove directory
+            except:                                                             # on exception
+              os.remove( path );                                                # Try to remove file; may be symlink
+        os.rmdir( dirPath );                                                    # Remove the top level (input) directory
+      used = self.config['backup_size']+self.backup_size;                       # Compute diskspace used by current backups and current one      
+    self.statusTXT = 'Deleting old backups'
+    localRemove();
     utils.saveConfig( self.config );                                            # Update the configuration file
+  ########################################################
+  def __size_fmt(self, num, suffix='B'):
+    '''
+    Purpose:
+      Private method for determining the size of 
+      a file in a human readable format
+    Inputs:
+      num  : An integer number file size
+    Authors:
+      Barrowed from https://github.com/ekim1337/PlexComskip
+    '''
+    for unit in ['','K','M','G','T','P','E','Z']:
+      if abs(num) < 1024.0:
+        return "{:3.1f}{}{}".format(num, unit, suffix)
+      num /= 1024.0
+    return "{:.1f}{}{}".format(num, 'Y', suffix);

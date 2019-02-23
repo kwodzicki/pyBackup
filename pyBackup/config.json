@@ -7,14 +7,16 @@
         "/srv/",
         "/sys/",
         "/tmp/",
-        "/var/"
+        "/var/",
+        "lost+found/"
     ],
     "user_exclude": [],
-    "last_backup": "",
+    "last_backup": "2019-02-23T19_26_47",
     "days_since_last_backup": 0,
-    "backup_size": 0,
+    "backup_size": 5056893730,
     "backup_dir": "Backups.backupsdb/kyleadmin-MacBookPro",
     "disk_size": 1771103873433,
     "disk_UUID": "82ed9c87-3475-4319-a050-dbca26409681",
-    "dateFMT": "%Y-%V-%m-%d-%H%M%S"
+    "date_FMT": "%Y-%m-%dT%H_%M_%S",
+    "auto_backup": false
 }

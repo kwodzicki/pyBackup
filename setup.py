@@ -9,9 +9,9 @@ setuptools.setup(
   url              = "https://github.com/kwodzicki/pyBackup",
   author           = "Kyle R. Wodzicki",
   author_email     = "krwodzicki@gmail.com",
-  version          = "0.0.5",
+  version          = "0.0.6",
   packages         = setuptools.find_packages(),
-  install_requires = ['PyQt5'],
+  install_requires = ['PyQt5', 'python-crontab'],
   scripts          = ['bin/pyBackup'],
   zip_safe         = False
 );

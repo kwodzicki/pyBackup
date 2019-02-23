@@ -7,7 +7,8 @@
 		"/srv/", 
 		"/sys/", 
 		"/tmp/", 
-		"/var/"
+		"/var/",
+        "lost+found/"
 	],
 	"user_exclude":[],
 	"last_backup":"",
@@ -15,5 +16,7 @@
 	"backup_size":0,
 	"backup_dir":"Backups.backupsdb",
 	"disk_size":0,
-	"disk_UUID":""
+	"disk_UUID":"",
+    "date_FMT": "%Y-%m-%dT%H_%M_%S",
+	"auto_backup":false
 }
