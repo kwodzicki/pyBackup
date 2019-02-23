@@ -1,8 +1,0 @@
-#!/usr/bin/env python
-if __name__ == "__main__":
-  import os;
-  from pyBackup.rsyncBackup import rsyncBackup;
-  inst = rsyncBackup();
-  inst.backup();
-  if os.path.isfile( inst.lock_file ): os.remove( inst.lock_file )
-  exit(0);

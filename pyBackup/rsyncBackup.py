@@ -217,3 +217,9 @@ class rsyncBackup( object ):
         return "{:3.1f}{}{}".format(num, unit, suffix)
       num /= 1024.0
     return "{:.1f}{}{}".format(num, 'Y', suffix);
+
+if __name__ == "__main__":
+  inst = rsyncBackup();
+  inst.backup();
+  if os.path.isfile( inst.lock_file ): os.remove( inst.lock_file )
+  exit(0);
