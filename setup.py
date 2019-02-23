@@ -9,9 +9,9 @@ setuptools.setup(
   url              = "https://github.com/kwodzicki/pyBackup",
   author           = "Kyle R. Wodzicki",
   author_email     = "krwodzicki@gmail.com",
-  version          = "0.0.4",
+  version          = "0.0.5",
   packages         = setuptools.find_packages(),
-  install_requires = ['Pillow', 'pystray', 'PySide'],
+  install_requires = ['PyQt5'],
   scripts          = ['bin/pyBackup'],
   zip_safe         = False
 );

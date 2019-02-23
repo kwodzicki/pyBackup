@@ -1,18 +1,20 @@
 {
-	"exclude":[
-		"/boot/", 
-		"/dev/", 
-		"/media/", 
-		"/proc/", 
-		"/srv/", 
-		"/sys/", 
-		"/tmp/", 
-		"/var/"
-	],
-	"user_exclude":[],
-	"last_backup":"",
-	"days_since_last_backup":0,
-	"backup_size":0,
-	"backup_dir":"",
-	"drive_size":0
+    "exclude": [
+        "/boot/",
+        "/dev/",
+        "/media/",
+        "/proc/",
+        "/srv/",
+        "/sys/",
+        "/tmp/",
+        "/var/"
+    ],
+    "user_exclude": [],
+    "last_backup": "",
+    "days_since_last_backup": 0,
+    "backup_size": 0,
+    "backup_dir": "Backups.backupsdb/kyleadmin-MacBookPro",
+    "disk_size": 1771103873433,
+    "disk_UUID": "82ed9c87-3475-4319-a050-dbca26409681",
+    "dateFMT": "%Y-%V-%m-%d-%H%M%S"
 }

@@ -1,50 +1,19 @@
 #!/usr/bin/env python3
 import sys, signal, time;
-from PIL import Image;
-from pystray import MenuItem;
-import pystray;
 
 from threading import Thread;
 from PyQt5.QtWidgets import QApplication;
-from pyBackup.pyBackupGui import pyBackupGui;
-from pyBackup import icons;
+from pyBackup.pyBackupGui import pyBackupSettings;
  
-
-backupThread = None;
-main_image   = Image.open( icons.main );
-load_images  = [Image.open( i ) for i in icons.images];
 
 def sig_handler(signum = None, frame = None):
   print( 'Signal handler called with signal', signum );
   quit();
   sys.exit(0);
-    
-def backup( *args ):
-  for i in range( len(load_images)*6 ):
-    icon.icon = load_images[i % len(load_images)]
-    time.sleep(0.1);
-  icon.icon = main_image;
-  
-def prefs( *args ):
-  qt_app = QApplication( sys.argv )
-  inst   = pyBackupGui( );
-  qt_app.exec_();
-
-def startBackup( *args ):
-  backupThread = Thread( target = backup );
-  backupThread.start();
-  
-def quit( *args ):
-  icon.stop();
-
+        
 for sig in [signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT]:
   signal.signal(sig, sig_handler)
 
-menu  = ( MenuItem('Backup Now',                startBackup),
-          MenuItem('Open pyBackup Preferences', prefs), 
-          MenuItem('Quit',                      quit) )
-# icon = pystray.Icon('test', icon = main_image, menu = menu );
-icon = pystray.Icon('test', icon = main_image, menu = menu );
-print(icon, icon.HAS_MENU)
-icon.run( );
-main_image.close();
+qt_app = QApplication( sys.argv )
+inst   = pyBackupSettings( );
+qt_app.exec_();

@@ -1,47 +1,69 @@
-#!/usr/bin/env python
-
 import os, sys, shutil, json;
 from datetime import datetime;
 from subprocess import Popen, PIPE, STDOUT, DEVNULL;
 
-dir = os.path.dirname( os.path.abspath( __file__ ) )
-configFile = os.path.join(dir, 'config.json');
+from . import utils;
 
-class pyBackup( object ):
-  def __init__(self, config=None):
+
+class rsyncBackup( object ):
+  def __init__(self):
     super().__init__();
-    if config is None:
-      config = self.__initConfig();
-    self.dateFMT     = "%Y-%V-%m-%d-%H%M%S";                                                 # Format for dates
-    self.cmd         = ['rsync', '-a', '--stats'];                                           # Base command for rsync
-    self.config      = config;
-    self.backup_dir  = config['backup_dir'];
-    self.exclude_dir = config['exclude'];
+    self.config      = utils.loadConfig();                                      # Load configuration file
+    self.mountPoint  = utils.get_MountPoint( self.config['disk_UUID'] );        # Get the backup disk mount point
+    self.cmd         = ['rsync', '-a', '--stats'];                              # Base command for rsync
+    self.backup_dir  = os.path.join(self.mountPoint, self.config['backup_dir']);# Full path to top-level backup directory
+    self.exclude_dir = self.config['exclude'];
     self.latest_dir  = os.path.join( self.backup_dir, 'Latest' );                # Set the Latest link path in the backup directory
-    self.date_str    = datetime.utcnow().strftime( self.dateFMT );                    # Get current UTC time
-    self.dst_dir     = os.path.join( self.backup_dir, self.date_str )
-    self.prog_dir    = self.dst_dir + '.inprogress';
+
+    self.dir_list    = None;
+    self.dst_dir     = None;
+    self.prog_dir    = None;
     self.src_dir     = '/';
-    self.dir_list    = self.__getDirList()
     self.backup_size = None;
     self.progress    = 0.0;
+    self.lock_file   = '/tmp/pyBackup.lock'
+  def test(self):
+    print( 'This is a test from rsyncBackup' )
   ##############################################################################
-  def run(self):
+  def backup(self):
     # Check if the 'Latest' link exists in the backup directory
-    cmd = self.cmd;
-    link_dir = self.__getLinkDir();
-    cmd.append( '--link-dest={}'.format( link_dir ) );                              # Add link directory to cmd
+    if not self.config['disk_UUID']:                                            # If the backup disk has not been setup yet
+      raise Exception( 'Backup disk NOT set!' );                                # Raise exception
+    elif not self.mountPoint:                                                   # If no mount point found, i.e, not mounted
+        last_backup = datetime.strptime( 
+          self.config['last_backup'], self.config['dateFMT']
+        );                                                                      # Convert last backup date string to datetime object
+        days_since = (datetime.utcnow() - last_backup).days;                    # Compute days since last backp
+        self.config['days_since_last_backup'] = days_since;                     # Update days since last backup
+        utils.saveConfig( self.config );                                        # Update config settings
+        raise Exception( 'Backup disk NOT mounted!' );                          # Raise exception
 
-    ## Exclude directories
-    for dir in self.exclude_dir: cmd.append( '--exclude={}'.format( dir ) );    # Iterate over all exlude directories and append to cmd
-    cmd.append( '--exclude={}'.format( self.backup_dir) );                      # Append src directory path as exclude
+    if not os.path.isfile( self.lock_file ):
+      open( self.lock_file, 'w' ).close();                                      # Create lock file
+      date          = datetime.utcnow();                                        # Get current UTC date
+      date_str      = date.strftime( self.config['dateFMT']    );               # Format date to string
+      self.dir_list = self.__getDirList( self.backup_dir )
+      self.dst_dir  = os.path.join(  self.backup_dir, date_str );               # Set up destination directory
+      self.prog_dir = self.dst_dir + '.inprogress';                             # Set up progress directory
 
-    self.backup_size = self.__getTransferSize( cmd );
-    self.__removeDirs( );
-    self.__transfer( cmd );
-    os.rename( self.prog_dir, self.dist_dir );
-    os.symlink( self.dst_dir, self.latest_dir );
-    self.__updateConfig();
+      cmd      = self.cmd;
+      link_dir = self.__getLinkDir();
+      cmd.append( '--link-dest={}'.format( link_dir ) );                        # Add link directory to cmd
+
+      ## Exclude directories
+      for dir in self.exclude_dir: cmd.append( '--exclude={}'.format( dir ) );  # Iterate over all exlude directories and append to cmd
+      cmd.append( '--exclude={}'.format( self.backup_dir) );                    # Append src directory path as exclude
+
+      self.backup_size = self.__getTransferSize( cmd );
+      self.__removeDirs( );
+      self.__transfer( cmd );
+      os.rename( self.prog_dir, self.dist_dir );
+      os.symlink( self.dst_dir, self.latest_dir );
+      self.config['backup_size'] += self.backup_size;
+      self.config['last_backup']  = date_str;                                   # Update the last backup date string
+      self.config['days_since_last_backup'] = 0;                                # Update days since last backup
+      utils.saveConfig( self.config );                                          # Update the config file
+      os.remove( self.lock_file );                                              # Delete lock file
   ##############################################################################
   def __getTransferSize(self, cmd):
     proc = Popen( cmd + ['-n', self.src_dir, self.prog_dir], 
@@ -69,14 +91,14 @@ class pyBackup( object ):
       line = proc.stdout.readline();                                            # Get another line from rsync command
     proc.communicate();                                                         # Close the PIPEs and everything
   ##############################################################################
-  def __getDirList( self ):
+  def __getDirList( self, backup_dir ):
     '''Function to get list of directories in a directory.'''
-    listdir, dirs = os.listdir( self.backup_dir ), [];                            # Get list of all files in directory and initialize dirs as list
-    for dir in listdir:                                                           # Iterate over directories in listdir
-      tmp = os.path.join( self.backup_dir, dir);                                  # Generate full file path
-      if os.path.isdir(tmp) and not os.path.islink(tmp): dirs.append( tmp );      # If the path is a directory and it is NOT a link, then append it to the dirs list
-    dirs.sort();                                                                  # Sort the dirs list
-    return dirs;                                                                  # Return the dirs list
+    listdir, dirs = os.listdir( backup_dir ), [];                               # Get list of all files in directory and initialize dirs as list
+    for dir in listdir:                                                         # Iterate over directories in listdir
+      tmp = os.path.join( backup_dir, dir);                                     # Generate full file path
+      if os.path.isdir(tmp) and not os.path.islink(tmp): dirs.append( tmp );    # If the path is a directory and it is NOT a link, then append it to the dirs list
+    dirs.sort();                                                                # Sort the dirs list
+    return dirs;                                                                # Return the dirs list
   ##############################################################################
   def __getLinkDir(self):
     if os.path.lexists( self.latest_dir ):                                      # If the latest directory exists
@@ -115,21 +137,4 @@ class pyBackup( object ):
           except:                                                               # on exception
             os.remove( path );                                                  # Try to remove file; may be symlink
       os.rmdir( dirPath );                                                      # Remove the top level (input) directory
-  ##############################################################################
-  def __initConfig(self):
-    with open(configFile, 'r') as fid:
-      config = json.load( fid );
-    config['backup_dir'] = input('Where do you want to backup to: ');
-    total, used, free = shutil.disk_usage( config['backup_dir'] );
-    config['drive_size'] = int( total * 0.9 );
-    return config;
-  ##############################################################################
-  def __updateConfig(self):
-    self.config['backup_size'] += self.backup_size;
-    self.config['last_backup']  = self.date_str
-    with open(configFile, 'w') as fid:
-      json.dump( self.config, fid );
-
-if __name__ == "__main__":
-  inst = pyBackup();
-  inst.run();
+    utils.saveConfig( self.config );                                            # Update the configuration file

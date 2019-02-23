@@ -1,0 +1,19 @@
+{
+	"exclude":[
+		"/boot/", 
+		"/dev/", 
+		"/media/", 
+		"/proc/", 
+		"/srv/", 
+		"/sys/", 
+		"/tmp/", 
+		"/var/"
+	],
+	"user_exclude":[],
+	"last_backup":"",
+	"days_since_last_backup":0,
+	"backup_size":0,
+	"backup_dir":"Backups.backupsdb",
+	"disk_size":0,
+	"disk_UUID":""
+}
