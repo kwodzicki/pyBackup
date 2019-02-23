@@ -26,7 +26,8 @@ _desktop  = os.path.join( _home, 'Desktop' );
 #############################################
 class pyBackupSettings( rsyncBackup, QMainWindow ):
   statusSignal = QtCore.pyqtSignal(str);
-  pBarSignal   = QtCore.pyqtSignal(int)
+  pBarSignal   = QtCore.pyqtSignal(int);
+  pBarTxtSignal= QtCore.pyqtSignal(bool);
   def __init__(self, *args, **kwargs):
     super().__init__( *args, **kwargs );                                        # Initialize the base class
     self.log = logging.getLogger( __name__ )
@@ -56,11 +57,11 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
     self.destPath.show();
     
     # Text labels
-    if self.config['last_backup'] == "":
+    if self.config['days_since_last_backup'] == "":
       txt = self.lastBackupFMT.format( 'Never' );
     else:
       txt = self.lastBackupFMT.format( 
-        '{} days ago'.format( self.config['last_backup'] )
+        '{} days ago'.format( self.config['days_since_last_backup'] )
       );
     self.lastLabel    = QLabel( txt );
     self.statusLabel  = QLabel( self.statusFMT.format('') );
@@ -71,7 +72,7 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
     self.pBar.setRange(0, 100);
     self.pBar.setGeometry( 30, 40, 200, 24 );
     self.pBarSignal.connect( self.pBar.setValue );
-
+    self.pBarTxtSignal.connect( self.pBar.setTextVisible );
     # Auto backup button
     self.autoButton   = QPushButton();                                          # Initialize button for selecting the destination directory
     self.autoButton.clicked.connect( self.autoBackup );                         # Set method to run when the destination button is clicked
@@ -123,6 +124,9 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
       self.destPath.show()                                                      # Show the destSet icon
 
   ##############################################################################
+  def cancel(self):
+    super().cancel();
+  ##############################################################################
   def backup(self):
     '''
     Purpose:
@@ -134,21 +138,27 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
       disabledMessage().exec_();                                                # Display a dialog saying cannot do unles root
       # return;
     if not self.backupThread:                                                   # If there is NOT a backup thread running
+      self.backupButton.setText( 'Cancel Backup' );
       self.backupThread = Thread( target = self._backupThread );                # Initialize new thread
       self.backupThread.start();                                                # Start the thread
+    else:
+      self.cancel();
+      self.backupButton.setText( 'Backup now!' );
   ##############################################################################
   def _backupThread(self):
     self.statusSignal.emit( self.statusFMT.format('Backing up') );              # Set status
     thread = Thread( target = super().backup );                                 # Initialize thread for actual backup
     thread.start();                                                             # Start backing up
+    self.pBarTxtSignal.emit(True);
     while thread.is_alive():                                                    # While the thread is running
       self.statusSignal.emit( self.statusFMT.format( self.statusTXT) );         # Update backup status
-      self.pBarSignal.emit(   int( self.progress ) );                            # Update progress bar
-      print(self.progress)
-      time.sleep(2.0);                                                          # Sleep for one second
+      self.pBarSignal.emit(   int( self.progress ) );                           # Update progress bar
+      time.sleep(1.0);                                                          # Sleep for one second
     time.sleep(2.0);                                                            # Sleep for 2 seconds
     self.statusSignal.emit( self.statusFMT.format('') );                        # Update backup status
     self.backupThread = None;                                                   # Set backup thread to None
+    self.pBarTxtSignal.emit(False);
+    self.pBarSignal.emit( 0 );
   ##############################################################################
   def autoBackup(self):
     if not self.is_root:                                                        # If not running as root
@@ -161,85 +171,3 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
     else:
       self.autoButton.setText( self.autoBackupFMT.format('Disabled') )
     utils.saveConfig( self.config );                                            # Update config file
-  ##############################################################################
-  def proc_files(self, *args):
-    '''
-    Method for processing sounding files;
-      i.e., renaming and removing values where ballon is descending in
-      sounding
-    '''
-    failed = False;                                                             # Initialize failed to False
-    self.log.info( 'Processing files' );    
-    files = os.listdir( self.dst_dirFull );                                     # Get list of all files in the directory
-    for file in files:                                                          # Iterate over the list of files
-      for key in settings.rename:                                               # Loop over the keys in the settings.rename dictionary
-        if key in file:                                                         # If the key is in the source file name
-          dst_file = settings.rename[key].format( self.date_str );              # Set a destination file name
-          dst      = os.path.join( self.dst_dirFull, dst_file );                # Build the destination file path
-          src      = os.path.join( self.dst_dirFull, file );                    # Set source file path
-#           self.uploadFiles.append( dst );                                       # Append the file to the uploadFile list
-          self.log.info( 'Moving file: {} -> {}'.format(src, dst) );            # Log some information
-          os.rename( src, dst );                                                # Move the file
-          if not os.path.isfile( dst ):                                         # If the renamed file does NOT exist
-            self.log.error( 'There was an error renaming the file!' );          # Log an error
-            failed = True;                                                      # Set failed to True
-      for key in settings.convert:                                              # Loop over the keys in the settings.rename dictionary
-        if key in file:                                                         # If the key is in the source file name
-          dst_file = settings.convert[key].format( self.date_str );             # Set a destination file name
-          self.sndDataFile = os.path.join( self.dst_dirFull, dst_file );        # Build the destination file path
-          src              = os.path.join( self.dst_dirFull, file );            # Set source file path
-#           self.uploadFiles.append( dst );                                        # Append the file to the uploadFile list
-          
-          self.log.info( 'Converting sounding data to SHARPpy format...' );     # Log some information
-          res = iMet2SHARPpy( src, self.stationName.text().upper(), 
-            datetime = self.date, output = self.sndDataFile);                   # Run function to convert data to SHARPpy format
-          if res and os.path.isfile( self.sndDataFile ):                        # If function returned True and the output file exists
-            self.ftpInfo['ucar']['files'].append( self.sndDataFile );
-            self.ftpInfo['noaa']['files'].append( self.sndDataFile );
-          else:
-            failed = True;                                                      # Set failed to True
-            self.sndDataFile = None;                                            # if the function failed to run OR the output file does NOT exist
-            self.log.error( 'There was an error creating SHARPpy file!' );      # Log an error
-            criticalMessage(
-              'Problem converting the sounding data to SHARPpy format!'
-            ).exec_();                                                          # Generate critical error message box
-    if not failed:                                                              # If failed is False
-      self.log.info( 'Ready to generate sounding image!' );                     # Log some info
-      self.genButton.setEnabled( True );                                        # Enable the 'Generate Sounding' button
-
-  ##############################################################################
-  def reset_values(self, noDialog = False, noSRC = False, noDST = False):
-    '''
-    Method to reset all the values in the GUI
-    Keywords:
-       noDialog  : Set to true to disable the checking dialog
-       noSRC     : Set to true so that all values BUT source directory info are cleared
-       noDST     : Set to true so that all values BUT destination directory info are cleared
-       
-       Setting both noSRC and noDST will exclude the two directories
-    '''
-    check = False;                                                              # Dialog check value initialize to False
-    if not noDialog:                                                            # If noDialog is False
-      dial = confirmMessage( 'Are you sure you want to reset all values?' );    # Initialize confirmation dialog
-      dial.exec_();                                                             # Display the confirmation dialog
-      check = dial.check();                                                     # Check which button selected
-    if check or noDialog:                                                       # If the check is True or noDialog is True
-      self.log.debug( 'Resetting all values!' );                                # Log some information
-      if not noSRC or not noDST:                                                # If noSRC is False OR noDST is false
-        self.copyButton.setEnabled(False);                                      # Set enabled state to False; cannot click until after the source and destination directories set
-      self.procButton.setEnabled(False);                                        # Set enabled state to False; cannot click until after 'Copy Files' completes
-      self.genButton.setEnabled(False);                                         # Set enabled state to False; cannot click until after 'Process Files' completes
-      self.uploadButton.setEnabled(False);                                      # Set enabled state to False; cannot click until after 'Generate Sounding' completes
-      self.checkButton.setEnabled(False);                                       # Set enabled state to False; cannot click until after 'FTP Upload' completes
-  
-      if not noSRC:                                                             # If the noSRC keyword is NOT set
-        self.sourcePath.hide();                                                 # Hide the source directory path
-        self.sourceSet.hide();                                                  # Hide the source directory indicator
-      if not noDST:                                                             # If the noDST keyword is NOT set
-        self.destPath.hide();                                                   # Hide the destination directory path
-        self.destSet.hide();                                                    # Hide the destination directory indicator
-  
-      self.dateFrame.resetDate();                                               # Reset all the dates
-      self.iopName.setText(     '' );                                           # Initialize Entry widget for the IOP name
-      self.stationName.setText( '' );                                           # Initialize Entry widget for the IOP name
-      self.__reset_ftpInfo();
