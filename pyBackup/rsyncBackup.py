@@ -1,7 +1,7 @@
 import logging;
 from logging.handlers import RotatingFileHandler;
 
-import os, sys, shutil, re;
+import os, sys, shutil, re, signal;
 from datetime import datetime;
 from subprocess import Popen, PIPE, STDOUT, DEVNULL;
 
@@ -34,6 +34,9 @@ class rsyncBackup( object ):
     self.log_file    = '/var/logs/pyBackup_rsync.log'
     self.statusTXT   = '';
     self.__cancel    = False;
+    for sig in [signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT]:
+      signal.signal(sig, self.cancel);
+
   ##############################################################################
   @property
   def backup_dir(self):
@@ -53,7 +56,7 @@ class rsyncBackup( object ):
     if value != '': self.log.info( value );
     self.__statusTXT = value;                                                  # Set private variable
   ##############################################################################
-  def cancel(self):
+  def cancel(self, *args):
     self.statusTXT = 'Canceling backup'
     self.__cancel  = True;
   ##############################################################################
@@ -73,7 +76,7 @@ class rsyncBackup( object ):
       self.log.error( 'Backup disk NOT set!' )
       self.log.debug('Removing lock file.')
       os.remove( self.lock_file)
-      return
+      return 1
 
     # Check backup disk mounted
     self.mountPoint = utils.get_MountPoint( self.config['disk_UUID'] );         # Get the backup disk mount point
@@ -88,7 +91,7 @@ class rsyncBackup( object ):
       utils.saveConfig( self.config );                                          # Update config settings
       self.log.debug('Removing lock file.')
       os.remove( self.lock_file)
-      return
+      return 1
 
     # Backing up!
     self.backup_dir  = os.path.join(self.mountPoint, self.config['backup_dir']);# Full path to top-level backup directory
@@ -120,8 +123,10 @@ class rsyncBackup( object ):
       self.config['last_backup']  = date_str;                                   # Update the last backup date string
       self.config['days_since_last_backup'] = 0;                                # Update days since last backup
       utils.saveConfig( self.config );                                          # Update the config file
-    self.__cleanUp();
-    self.statusTXT   = 'Finished'
+      self.__cleanUp();
+      self.statusTXT   = 'Finished'
+      return 0
+    return 1
   ##############################################################################
   def __cleanUp(self):
     self.statusTXT = 'Cleaning up'
@@ -255,8 +260,4 @@ class rsyncBackup( object ):
 # If run from command line
 if __name__ == "__main__":
   inst = rsyncBackup();
-  try:
-    inst.backup();
-  except:
-    exit(1);
-  exit(0);
+  exit( inst.backup() );
