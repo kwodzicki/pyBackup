@@ -1,3 +1,6 @@
+import logging;
+from logging.handlers import RotatingFileHandler;
+
 import os, sys, shutil, re;
 from datetime import datetime;
 from subprocess import Popen, PIPE, STDOUT, DEVNULL;
@@ -8,8 +11,10 @@ part_regex  = re.compile( r'\s*((?:\d{1,3},?)+)\s+(?:\d{1,3}\%)');
 trans_regex = re.compile( r'\s*((?:\d{1,3},?)+)\s+(?:\d{1,3}\%).+\(.+\)');
 size_regex  = re.compile( r'Total transferred file size:\s((?:\d{1,3},?)+)\sbytes' )
 class rsyncBackup( object ):
-  def __init__(self):
+  def __init__(self, src_dir = '/', loglevel = logging.INFO):
     super().__init__();
+    self.log         = logging.getLogger(__name__);
+    self.loglevel    = loglevel;
     self.cmd         = ['rsync', '-a', '--stats'];                              # Base command for rsync
     self.config      = utils.loadConfig();                                      # Load configuration file
     self.mountPoint  = None;                                                    # Get the backup disk mount point
@@ -21,11 +26,12 @@ class rsyncBackup( object ):
     self.inProg_list = [];
     self.dst_dir     = None;
     self.prog_dir    = None;
-    self.src_dir     = '/';
+    self.src_dir     = src_dir;
     self.link_dir    = None;
     self.backup_size = None;
     self.progress    = 0.0;
     self.lock_file   = '/tmp/pyBackup.lock'
+    self.log_file    = '/var/logs/pyBackup_rsync.log'
     self.statusTXT   = '';
     self.__cancel    = False;
   ##############################################################################
@@ -38,6 +44,14 @@ class rsyncBackup( object ):
       if not os.path.isdir( value ): 
         os.makedirs( value );                                                   # If dirctory does NOT exist, create it
     self.__backup_dir = value;                                                  # Set private variable
+  #########
+  @property
+  def statusTXT(self):
+    return self.__statusTXT;
+  @statusTXT.setter
+  def statusTXT(self, value):
+    if value != '': self.log.info( value );
+    self.__statusTXT = value;                                                  # Set private variable
   ##############################################################################
   def cancel(self):
     self.statusTXT = 'Canceling backup'
@@ -49,23 +63,32 @@ class rsyncBackup( object ):
       return;                                                                   # Return from method
     else:
       open( self.lock_file, 'w' ).close();                                      # Create lock file
+    rotFile  = RotatingFileHandler(self.log_file,
+      maxBytes = 10 * 1024**2, backupCount = 4, encoding = 'utf8' );            # Initialize rotating file handler
+    rotFile.setLevel( self.loglevel );                                          # Set level to INFO
+    self.log.addHandler( rotFile );                                             # Add file handler to logger
 
     # Check backup disk set
     if not self.config['disk_UUID']:                                            # If the backup disk has not been setup yet
+      self.log.error( 'Backup disk NOT set!' )
+      self.log.debug('Removing lock file.')
       os.remove( self.lock_file)
-      raise Exception( 'Backup disk NOT set!' );                                # Raise exception
-    
+      return
+
     # Check backup disk mounted
     self.mountPoint = utils.get_MountPoint( self.config['disk_UUID'] );         # Get the backup disk mount point
     if not self.mountPoint:                                                     # If no mount point found, i.e, not mounted
+      self.log.info( 'Backup disk NOT mounted!' )
       last_backup = datetime.strptime( 
         self.config['last_backup'], self.config['date_FMT']
       );                                                                        # Convert last backup date string to datetime object
       days_since = (datetime.utcnow() - last_backup).days;                      # Compute days since last backp
+      self.log.info( 'Days since last backup: {}'.foramt(days_since) );
       self.config['days_since_last_backup'] = days_since;                       # Update days since last backup
       utils.saveConfig( self.config );                                          # Update config settings
+      self.log.debug('Removing lock file.')
       os.remove( self.lock_file)
-      raise Exception( 'Backup disk NOT mounted!' );                            # Raise exception
+      return
 
     # Backing up!
     self.backup_dir  = os.path.join(self.mountPoint, self.config['backup_dir']);# Full path to top-level backup directory
@@ -136,8 +159,10 @@ class rsyncBackup( object ):
     line = proc.stdout.readline();                                              # Read first line form stdout
     while line and (not self.__cancel):                                         # While line is NOT empty
       trans_size = part_regex.findall( line );                                  # Try to find total size of transfered file
-      if len(trans_size) == 1:                                                  # If only one number found
-        trans_size    = int( trans_size[0].replace(',','') );
+      if len(trans_size) == 0:                                                  # If no number found, assume it is a file path
+        self.log.info( line.rstrip() );                                         # Log the file being backed up
+      elif len(trans_size) == 1:                                                # If only one number found
+        trans_size    = int( trans_size[0].replace(',','') );                   # Convert file size to integer
         self.progress = 100 * (transfered + trans_size) / self.backup_size;     # Set progress to fraction of transfered file size
         if '(' in line: transfered += trans_size;                               # If there is a '(' in file, it means file finished transfering
         self.progress  = 100 * transfered / self.backup_size;                   # Set progress to fraction of transfered file size
@@ -149,6 +174,7 @@ class rsyncBackup( object ):
   ##############################################################################
   def __getDirList( self, backup_dir ):
     '''Function to get list of directories in a directory.'''
+    self.log.debug('Getting list of backups')
     listdir, dirs, inprog = os.listdir( backup_dir ), [], [];                   # Get list of all files in directory and initialize dirs as list
     for dir in listdir:                                                         # Iterate over directories in listdir
       tmp = os.path.join( backup_dir, dir);                                     # Generate full file path
@@ -161,6 +187,7 @@ class rsyncBackup( object ):
     return dirs, inprog;                                                        # Return the dirs list
   ##############################################################################
   def __getLinkDir(self):
+    self.log.debug("Trying to find 'Latest' link")
     if os.path.lexists( self.latest_dir ):                                      # If the latest directory exists
       link_dir = os.readlink( self.latest_dir );                                # Read the link to the latest directory; will be used as linking directory. 
       os.remove( self.latest_dir );                                             # Delete the link
@@ -203,7 +230,8 @@ class rsyncBackup( object ):
             except:                                                             # on exception
               os.remove( path );                                                # Try to remove file; may be symlink
         os.rmdir( dirPath );                                                    # Remove the top level (input) directory
-      used = self.config['backup_size']+self.backup_size;                       # Compute diskspace used by current backups and current one      
+        used = self.config['backup_size']+self.backup_size;                     # Compute diskspace used by current backups and current one      
+        self.log.debug( 'Deleted: {}'.format(dirPath) )
     self.statusTXT = 'Deleting old backups'
     localRemove();
     utils.saveConfig( self.config );                                            # Update the configuration file

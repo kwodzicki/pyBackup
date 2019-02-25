@@ -58,7 +58,7 @@ setup(
   url                  = pkg_url,
   author               = "Kyle R. Wodzicki",
   author_email         = "krwodzicki@gmail.com",
-  version              = "0.0.15",
+  version              = "0.0.16",
   packages             = find_packages(),
   install_requires     = ['PyQt5', 'python-crontab'],
   scripts              = ['bin/pyBackup'],
