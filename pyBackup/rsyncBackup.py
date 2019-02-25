@@ -227,5 +227,8 @@ class rsyncBackup( object ):
 # If run from command line
 if __name__ == "__main__":
   inst = rsyncBackup();
-  inst.backup();
+  try:
+    inst.backup();
+  except:
+    exit(1);
   exit(0);
