@@ -22,8 +22,7 @@ class rsyncBackup( object ):
     self.exclude_dir = None;                                                    #
     self.latest_dir  = None;                                                    # Set the Latest link path in the backup directory
 
-    self.dir_list    = [];
-    self.inProg_list = [];
+    self.backups     = {'full' : [], 'partial' : [], 'cancelled' : []};          # Dictionary with lists of various backup directories
     self.dst_dir     = None;
     self.prog_dir    = None;
     self.src_dir     = src_dir;
@@ -74,8 +73,7 @@ class rsyncBackup( object ):
     # Check backup disk set
     if not self.config['disk_UUID']:                                            # If the backup disk has not been setup yet
       self.log.error( 'Backup disk NOT set!' )
-      self.log.debug('Removing lock file.')
-      os.remove( self.lock_file)
+      self.__removeLock();
       return 1
 
     # Check backup disk mounted
@@ -89,36 +87,44 @@ class rsyncBackup( object ):
       self.log.info( 'Days since last backup: {}'.foramt(days_since) );
       self.config['days_since_last_backup'] = days_since;                       # Update days since last backup
       utils.saveConfig( self.config );                                          # Update config settings
-      self.log.debug('Removing lock file.')
-      os.remove( self.lock_file)
+      self.__removeLock();
       return 1
-
-    # Backing up!
-    self.backup_dir  = os.path.join(self.mountPoint, self.config['backup_dir']);# Full path to top-level backup directory
-    self.exclude_dir = self.config['exclude'];
-    self.latest_dir  = os.path.join( self.backup_dir, 'Latest' );                # Set the Latest link path in the backup directory
-    date             = datetime.utcnow();                                       # Get current UTC date
-    date_str         = date.strftime( self.config['date_FMT']    );             # Format date to string
-
-    self.dir_list, self.inProg_list = self.__getDirList( self.backup_dir );     # Get list of vaild backup directories and those inprogress
-    self.dst_dir  = os.path.join(  self.backup_dir, date_str );                 # Set up destination directory
-    self.prog_dir = self.dst_dir + '.inprogress';                               # Set up progress directory
-    self.inProg_list.append( self.prog_dir );                                   # Append current in progress directory to that list
 
     ## Exclude directories
     cmd = self.cmd + [ '--exclude={}'.format( self.mountPoint) ];               # Append src directory path as exclude
     for dir in self.exclude_dir: cmd.append( '--exclude={}'.format( dir ) );    # Iterate over all exlude directories and append to cmd
+
+    # Backing up!
+    self.backup_dir  = os.path.join(self.mountPoint, self.config['backup_dir']);# Full path to top-level backup directory
+    self.exclude_dir = self.config['exclude'];
+    self.latest_dir  = os.path.join( self.backup_dir, 'Latest' );               # Set the Latest link path in the backup directory
+    date             = datetime.utcnow();                                       # Get current UTC date
+    date_str         = date.strftime( self.config['date_FMT']    );             # Format date to string
+
+    self.__getDirList( self.backup_dir );                                       # Get list of vaild backup directories
+    self.dst_dir  = os.path.join(  self.backup_dir, date_str );                 # Set up destination directory
+    self.prog_dir = self.dst_dir + '.inprogress';                               # Set up progress directory
+    if len( self.backups['partial'] ) > 0:                                      # If there are canceled backups still hanging around
+      self.log.info('Using latested canceled backup, should save some time.')
+      os.rename( self.backups['partial'][-1], self.prog_dir );                  # Rename the newest canceled backup to match the current .inprogress directory, this may save some time
+      cmd.append( '--delete' );                                                 # Append delete option to cmd; there may be flies in the canceled backup that no longer exists on the computer
+    self.backups['partial'].append( self.prog_dir );                            # Append current in progress directory to that list
 
     # Link directory to reduce backup size
     self.link_dir = self.__getLinkDir();
     if self.link_dir: cmd.append( '--link-dest={}'.format( self.link_dir ) );   # If a directory is returned, add link directory to cmd
 
     self.backup_size = self.__getTransferSize( cmd );
+    if self.backup_size == 0:                                                   # If nothing has changed:
+      self.log.info('No files have changed, skipping backup');
+      self.__removeLock();
+      return 0;
     self.__removeDirs( );
     self.__transfer( cmd );
     if not self.__cancel:                                                       # If backup has NOT been canceled
-      os.rename( self.prog_dir, self.dst_dir );
-      os.symlink( self.dst_dir, self.latest_dir );
+      os.rename(  self.prog_dir, self.dst_dir );                                # Move the .inprogress directory to normal name
+      os.remove(  self.latest_dir );                                            # Delete the 'Latest' link
+      os.symlink( self.dst_dir, self.latest_dir );                              # Create 'Latest' link pointed at newest backup
       self.config['backup_size'] += self.backup_size;
       self.config['last_backup']  = date_str;                                   # Update the last backup date string
       self.config['days_since_last_backup'] = 0;                                # Update days since last backup
@@ -126,16 +132,26 @@ class rsyncBackup( object ):
       self.__cleanUp();
       self.statusTXT   = 'Finished'
       return 0
+    self.__removeLock();
     return 1
+  ##############################################################################
+  def __removeLock(self):
+    if os.path.isfile( self.lock_file ): 
+      self.log.debug('Removing lock file');
+      os.remove( self.lock_file );                                              # Delete lock file
   ##############################################################################
   def __cleanUp(self):
     self.statusTXT = 'Cleaning up'
-    for dir in self.inProg_list:                                                # Iterate over directories where backup was in progress
-      shutil.rmtree( dir );                                                     # Delete the directory
+    for dir in self.backups['partial']:                                         # Iterate over directories where backup was in progress
+      if os.path.isdir( dir ):
+        shutil.rmtree( dir );                                                   # Delete the directory
+    for dir in self.backups['cancelled']:                                       # Iterate over directories where backup was in progress
+      if os.path.isdir( dir ):
+        shutil.rmtree( dir );                                                   # Delete the directory
     if not os.path.lexists( self.latest_dir ):                                  # If the 'Latest' directory does NOT exists
       if self.link_dir:                                                         # If the link_dir attribute is set
         os.symlink( self.link_dir, self.latest_dir );                           # Create symlink to link-dest dir
-    if os.path.isfile( self.lock_file ): os.remove( self.lock_file );           # Delete lock file
+    self.__removeLock();
   ##############################################################################
   def __getTransferSize(self, cmd):
     self.statusTXT = 'Calculating backup size'
@@ -180,24 +196,23 @@ class rsyncBackup( object ):
   def __getDirList( self, backup_dir ):
     '''Function to get list of directories in a directory.'''
     self.log.debug('Getting list of backups')
-    listdir, dirs, inprog = os.listdir( backup_dir ), [], [];                   # Get list of all files in directory and initialize dirs as list
+    listdir      = os.listdir( backup_dir );                                    # Get list of all files in directory and initialize dirs as list
+    self.backups = {'full' : [], 'partial' : [], 'cancelled' : []};             # Dictionary with lists of various backup directories
     for dir in listdir:                                                         # Iterate over directories in listdir
       tmp = os.path.join( backup_dir, dir);                                     # Generate full file path
-      if os.path.isdir(tmp) and (not os.path.islink(tmp)):
-        if '.inprogress' in dir:
-          inprog.append( tmp );
-        else:
-          dirs.append( tmp )
-    dirs.sort();                                                                # Sort the dirs list
-    return dirs, inprog;                                                        # Return the dirs list
+      if os.path.isdir(tmp) and ( not os.path.islink(tmp) ):                    # If the path is a directory and is NOT a symbolic link
+        if '.inprogress' in dir:                                                # If the directory has '.inprogress' in the name
+          self.backups['partial'].append( tmp );                                # Directory is in progress
+        else:                                                                   # Else, normal full backup
+          self.backups['full'].append( tmp )                                    # Append to dirs list
+    for key in self.backups: self.backups[key].sort();                          # Sort the various lists
   ##############################################################################
   def __getLinkDir(self):
     self.log.debug("Trying to find 'Latest' link")
     if os.path.lexists( self.latest_dir ):                                      # If the latest directory exists
       link_dir = os.readlink( self.latest_dir );                                # Read the link to the latest directory; will be used as linking directory. 
-      os.remove( self.latest_dir );                                             # Delete the link
-    elif len(self.dir_list) > 0:                                                # If there are directories in the dir_list attribute
-      link_dir = self.dir_list[-1];                                             # Set link_dir to empty string and set the link age to 52 weeks. If an existing directory is newer than 52 weeks, this variable is updated to the shorter time
+    elif len(self.backups['full']) > 0:                                         # If there are directories in the dir_list attribute
+      link_dir = self.backups['full'][-1];                                      # Set link_dir to empty string and set the link age to 52 weeks. If an existing directory is newer than 52 weeks, this variable is updated to the shorter time
     else:                                                                       # Else
       return None;                                                              # Return None value
     return link_dir;                                                            # Return link_dir
@@ -220,7 +235,7 @@ class rsyncBackup( object ):
     def localRemove():
       used = self.config['backup_size']+self.backup_size;                       # Compute diskspace used by current backups and current one
       while used > self.config['disk_size']:                                    # While the size of the current backup plus all other backups is larger than the drive size
-        for root, dirs, files in os.walk( self.dir_list.pop(0), topdown=False ):# Walk the directory tree
+        for root, dirs, files in os.walk( self.backups['full'].pop(0), topdown=False ):# Walk the directory tree
           for file in files:                                                    # Iterate over all files
             if self.__cancel: return;                                           # If __cancel is set, return
             path = os.path.join( root, file );                                  # Build the full file path
