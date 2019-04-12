@@ -11,7 +11,7 @@ part_regex  = re.compile( r'\s*((?:\d{1,3},?)+)\s+(?:\d{1,3}\%)');
 trans_regex = re.compile( r'\s*((?:\d{1,3},?)+)\s+(?:\d{1,3}\%).+\(.+\)');
 size_regex  = re.compile( r'Total transferred file size:\s((?:\d{1,3},?)+)\sbytes' )
 class rsyncBackup( object ):
-  def __init__(self, src_dir = '/', loglevel = logging.INFO):
+  def __init__(self, src_dir = '/', loglevel = logging.DEBUG):
     super().__init__();
     self.log         = logging.getLogger(__name__);
     self.loglevel    = loglevel;
@@ -30,7 +30,7 @@ class rsyncBackup( object ):
     self.backup_size = None;
     self.progress    = 0.0;
     self.lock_file   = '/tmp/pyBackup.lock'
-    self.log_file    = '/var/logs/pyBackup_rsync.log'
+    self.log_file    = os.path.join(os.path.expanduser('~'), 'pyBackup_rsync.log')
     self.statusTXT   = '';
     self.__cancel    = False;
     for sig in [signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT]:
@@ -92,11 +92,13 @@ class rsyncBackup( object ):
 
     ## Exclude directories
     cmd = self.cmd + [ '--exclude={}'.format( self.mountPoint) ];               # Append src directory path as exclude
-    for dir in self.exclude_dir: cmd.append( '--exclude={}'.format( dir ) );    # Iterate over all exlude directories and append to cmd
-
     # Backing up!
     self.backup_dir  = os.path.join(self.mountPoint, self.config['backup_dir']);# Full path to top-level backup directory
-    self.exclude_dir = self.config['exclude'];
+    for dir in self.config['exclude']:
+      cmd.append( '--exclude={}'.format( dir ) );      
+    for dir in self.config['user_exclude']: 
+      cmd.append( '--exclude={}'.format( dir ) );
+
     self.latest_dir  = os.path.join( self.backup_dir, 'Latest' );               # Set the Latest link path in the backup directory
     date             = datetime.utcnow();                                       # Get current UTC date
     date_str         = date.strftime( self.config['date_FMT']    );             # Format date to string
@@ -114,6 +116,7 @@ class rsyncBackup( object ):
     self.link_dir = self.__getLinkDir();
     if self.link_dir: cmd.append( '--link-dest={}'.format( self.link_dir ) );   # If a directory is returned, add link directory to cmd
 
+    self.log.debug( 'rsync cmd: {}'.format( cmd ) )
     self.backup_size = self.__getTransferSize( cmd );
     if self.backup_size == 0:                                                   # If nothing has changed:
       self.log.info('No files have changed, skipping backup');
@@ -163,6 +166,7 @@ class rsyncBackup( object ):
       trans_size = size_regex.findall( line );
       if len(trans_size) == 1:
         backup_size = int( trans_size[0].replace(',','') );
+        self.log.info( 'Backup size: {}'.format(backup_size) )
         break;
       line = proc.stdout.readline();
     if self.__cancel:
@@ -177,17 +181,17 @@ class rsyncBackup( object ):
       stdout = PIPE, stderr = STDOUT, 
       universal_newlines = True );                                              # Run rsync command
     transfered = 0;                                                             # Initialize total transferd size
-    line = proc.stdout.readline();                                              # Read first line form stdout
-    while line and (not self.__cancel):                                         # While line is NOT empty
+    line = proc.stdout.readline().rstrip();                                     # Read first line form stdout
+    while (line != '') and (not self.__cancel):                                 # While line is NOT empty
       trans_size = part_regex.findall( line );                                  # Try to find total size of transfered file
       if len(trans_size) == 0:                                                  # If no number found, assume it is a file path
-        self.log.info( line.rstrip() );                                         # Log the file being backed up
+        self.log.info( line );                                                  # Log the file being backed up
       elif len(trans_size) == 1:                                                # If only one number found
         trans_size    = int( trans_size[0].replace(',','') );                   # Convert file size to integer
         self.progress = 100 * (transfered + trans_size) / self.backup_size;     # Set progress to fraction of transfered file size
         if '(' in line: transfered += trans_size;                               # If there is a '(' in file, it means file finished transfering
         self.progress  = 100 * transfered / self.backup_size;                   # Set progress to fraction of transfered file size
-      line = proc.stdout.readline();                                            # Get another line from rsync command
+      line = proc.stdout.readline().rstrip();                                   # Get another line from rsync command
     self.progress = 100;                                                        # Ensure that percentage is 100
     if self.cancel:
       proc.terminate();
