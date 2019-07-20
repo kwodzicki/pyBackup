@@ -7,16 +7,26 @@ from subprocess import Popen, PIPE, STDOUT, DEVNULL;
 
 from pyBackup import utils;
 
-part_regex  = re.compile( r'\s*((?:\d{1,3},?)+)\s+(?:\d{1,3}\%)');
-trans_regex = re.compile( r'\s*((?:\d{1,3},?)+)\s+(?:\d{1,3}\%).+\(.+\)');
-size_regex  = re.compile( r'Total transferred file size:\s((?:\d{1,3},?)+)\sbytes' )
+rsync_errors = [1, 2, 3, 4, 5, 6, 10, 11, 12, 13, 14, 20, 21, 22, 25, 30, 35]
+part_regex   = re.compile( r'\s*((?:\d{1,3},?)+)\s+(?:\d{1,3}\%)');
+trans_regex  = re.compile( r'\s*((?:\d{1,3},?)+)\s+(?:\d{1,3}\%).+\(.+\)');
+size_regex   = re.compile( r'Total transferred file size:\s((?:\d{1,3},?)+)\sbytes' )
+
 class rsyncBackup( object ):
   def __init__(self, src_dir = '/', loglevel = logging.DEBUG):
     super().__init__();
     self.log         = logging.getLogger(__name__);
     self.loglevel    = loglevel;
+    self.log_file    = os.path.join(os.path.expanduser('~'), 'pyBackup_rsync.log')
+    rotFile  = RotatingFileHandler(self.log_file,
+      maxBytes = 10 * 1024**2, backupCount = 4, encoding = 'utf8' );            # Initialize rotating file handler
+    rotFile.setFormatter( logging.Formatter( '%(asctime)s [%(levelname)s] %(message)s' ) )
+    rotFile.setLevel( self.loglevel );                                          # Set level to INFO
+    self.log.addHandler( rotFile );                                             # Add file handler to logger
+
     self.cmd         = ['rsync', '-a', '--stats'];                              # Base command for rsync
     self.config      = utils.loadConfig();                                      # Load configuration file
+    self.__updateLastBackup()
     self.mountPoint  = None;                                                    # Get the backup disk mount point
     self.backup_dir  = None;                                                    # Full path to top-level backup directory
     self.exclude_dir = None;                                                    #
@@ -30,7 +40,6 @@ class rsyncBackup( object ):
     self.backup_size = None;
     self.progress    = 0.0;
     self.lock_file   = '/tmp/pyBackup.lock'
-    self.log_file    = os.path.join(os.path.expanduser('~'), 'pyBackup_rsync.log')
     self.statusTXT   = '';
     self.__cancel    = False;
     for sig in [signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT]:
@@ -54,22 +63,23 @@ class rsyncBackup( object ):
   def statusTXT(self, value):
     if value != '': self.log.info( value );
     self.__statusTXT = value;                                                  # Set private variable
+  
   ##############################################################################
   def cancel(self, *args):
+    self.log.error( args )
     self.statusTXT = 'Canceling backup'
     self.__cancel  = True;
+  
   ##############################################################################
   def backup(self):
-    # Check for lock file
+   # Check for lock file
     if os.path.isfile( self.lock_file ):                                        # If lock file exists
+      self.log.debug('Lock file exists, is there a backup running?')
       return;                                                                   # Return from method
     else:
+      self.log.debug('Creating lock file')
       open( self.lock_file, 'w' ).close();                                      # Create lock file
-    rotFile  = RotatingFileHandler(self.log_file,
-      maxBytes = 10 * 1024**2, backupCount = 4, encoding = 'utf8' );            # Initialize rotating file handler
-    rotFile.setLevel( self.loglevel );                                          # Set level to INFO
-    self.log.addHandler( rotFile );                                             # Add file handler to logger
-
+ 
     # Check backup disk set
     if not self.config['disk_UUID']:                                            # If the backup disk has not been setup yet
       self.log.error( 'Backup disk NOT set!' )
@@ -80,13 +90,6 @@ class rsyncBackup( object ):
     self.mountPoint = utils.get_MountPoint( self.config['disk_UUID'] );         # Get the backup disk mount point
     if not self.mountPoint:                                                     # If no mount point found, i.e, not mounted
       self.log.info( 'Backup disk NOT mounted!' )
-      last_backup = datetime.strptime( 
-        self.config['last_backup'], self.config['date_FMT']
-      );                                                                        # Convert last backup date string to datetime object
-      days_since = (datetime.utcnow() - last_backup).days;                      # Compute days since last backp
-      self.log.info( 'Days since last backup: {}'.foramt(days_since) );
-      self.config['days_since_last_backup'] = days_since;                       # Update days since last backup
-      utils.saveConfig( self.config );                                          # Update config settings
       self.__removeLock();
       return 1
 
@@ -116,17 +119,19 @@ class rsyncBackup( object ):
     self.link_dir = self.__getLinkDir();
     if self.link_dir: cmd.append( '--link-dest={}'.format( self.link_dir ) );   # If a directory is returned, add link directory to cmd
 
-    self.log.debug( 'rsync cmd: {}'.format( cmd ) )
     self.backup_size = self.__getTransferSize( cmd );
     if self.backup_size == 0:                                                   # If nothing has changed:
       self.log.info('No files have changed, skipping backup');
       self.__removeLock();
       return 0;
+
     self.__removeDirs( );
-    self.__transfer( cmd );
-    if not self.__cancel:                                                       # If backup has NOT been canceled
+    status = self.__transfer( cmd );
+    if (status not in rsync_errors) and (not self.__cancel):                    # If no bad error has ben returned from rsync AND backup has NOT been canceled
+      self.log.info( 'Moving : {} ---> {}'.format(self.prog_dir, self.dst_dir ) )
       os.rename(  self.prog_dir, self.dst_dir );                                # Move the .inprogress directory to normal name
-      os.remove(  self.latest_dir );                                            # Delete the 'Latest' link
+      if os.path.isfile( self.latest_dir):
+        os.remove(  self.latest_dir );                                          # Delete the 'Latest' link
       os.symlink( self.dst_dir, self.latest_dir );                              # Create 'Latest' link pointed at newest backup
       self.config['backup_size'] += self.backup_size;
       self.config['last_backup']  = date_str;                                   # Update the last backup date string
@@ -135,13 +140,17 @@ class rsyncBackup( object ):
       self.__cleanUp();
       self.statusTXT   = 'Finished'
       return 0
+    elif (status != 0):
+      self.log.critical('Backup failed! Return code : {}'.format(status) )
     self.__removeLock();
     return 1
+  
   ##############################################################################
   def __removeLock(self):
     if os.path.isfile( self.lock_file ): 
       self.log.debug('Removing lock file');
       os.remove( self.lock_file );                                              # Delete lock file
+  
   ##############################################################################
   def __cleanUp(self):
     self.statusTXT = 'Cleaning up'
@@ -155,6 +164,7 @@ class rsyncBackup( object ):
       if self.link_dir:                                                         # If the link_dir attribute is set
         os.symlink( self.link_dir, self.latest_dir );                           # Create symlink to link-dest dir
     self.__removeLock();
+  
   ##############################################################################
   def __getTransferSize(self, cmd):
     self.statusTXT = 'Calculating backup size'
@@ -174,28 +184,33 @@ class rsyncBackup( object ):
       backup_size = None;
     proc.communicate();
     return backup_size;
+  
   ##############################################################################
   def __transfer(self, cmd):
     self.statusTXT = 'Backing up {}'.format(self.__size_fmt(self.backup_size));
-    proc = Popen( cmd + ['--progress', self.src_dir, self.prog_dir], 
-      stdout = PIPE, stderr = STDOUT, 
-      universal_newlines = True );                                              # Run rsync command
+    cmd  = cmd + ['--progress', self.src_dir, self.prog_dir]
+    self.log.info( 'Full rsync cmd : {}'.format(cmd) )
+    proc = Popen( cmd, stdout=PIPE, stderr=STDOUT, universal_newlines=True )    # Run rsync command
     transfered = 0;                                                             # Initialize total transferd size
-    line = proc.stdout.readline().rstrip();                                     # Read first line form stdout
-    while (line != '') and (not self.__cancel):                                 # While line is NOT empty
+    line = proc.stdout.readline();                                              # Read first line form stdout
+    while line and (not self.__cancel):                                         # While line is NOT empty
       trans_size = part_regex.findall( line );                                  # Try to find total size of transfered file
-      if len(trans_size) == 0:                                                  # If no number found, assume it is a file path
-        self.log.info( line );                                                  # Log the file being backed up
+      if len(trans_size) == 0 and (line != '\n'):                               # If no number found, assume it is a file path
+        self.log.debug( line.rstrip() );                                         # Log the file being backed up
       elif len(trans_size) == 1:                                                # If only one number found
         trans_size    = int( trans_size[0].replace(',','') );                   # Convert file size to integer
         self.progress = 100 * (transfered + trans_size) / self.backup_size;     # Set progress to fraction of transfered file size
         if '(' in line: transfered += trans_size;                               # If there is a '(' in file, it means file finished transfering
-        self.progress  = 100 * transfered / self.backup_size;                   # Set progress to fraction of transfered file size
-      line = proc.stdout.readline().rstrip();                                   # Get another line from rsync command
+      line = proc.stdout.readline();                                            # Get another line from rsync command
+      time.sleep(0.01)
+
     self.progress = 100;                                                        # Ensure that percentage is 100
-    if self.cancel:
+    if self.__cancel:
       proc.terminate();
+
     proc.communicate();                                                         # Close the PIPEs and everything
+    return proc.returncode
+
   ##############################################################################
   def __getDirList( self, backup_dir ):
     '''Function to get list of directories in a directory.'''
@@ -210,16 +225,21 @@ class rsyncBackup( object ):
         else:                                                                   # Else, normal full backup
           self.backups['full'].append( tmp )                                    # Append to dirs list
     for key in self.backups: self.backups[key].sort();                          # Sort the various lists
+
   ##############################################################################
   def __getLinkDir(self):
-    self.log.debug("Trying to find 'Latest' link")
+    self.log.debug( 'Latest dir : {}'.format(self.latest_dir) )
+    self.log.debug( "Finding 'Latest' link destination")
     if os.path.lexists( self.latest_dir ):                                      # If the latest directory exists
       link_dir = os.readlink( self.latest_dir );                                # Read the link to the latest directory; will be used as linking directory. 
     elif len(self.backups['full']) > 0:                                         # If there are directories in the dir_list attribute
       link_dir = self.backups['full'][-1];                                      # Set link_dir to empty string and set the link age to 52 weeks. If an existing directory is newer than 52 weeks, this variable is updated to the shorter time
     else:                                                                       # Else
+      self.log.debug("'Latest' link either does not exist or destination not found!" )
       return None;                                                              # Return None value
+    self.log.debug('Latest dir : {}'.format( link_dir ) )
     return link_dir;                                                            # Return link_dir
+
   ##############################################################################
   def __removeDirs( self ):
     '''
@@ -259,6 +279,7 @@ class rsyncBackup( object ):
     self.statusTXT = 'Deleting old backups'
     localRemove();
     utils.saveConfig( self.config );                                            # Update the configuration file
+
   ########################################################
   def __size_fmt(self, num, suffix='B'):
     '''
@@ -276,6 +297,17 @@ class rsyncBackup( object ):
       num /= 1024.0
     return "{:.1f}{}{}".format(num, 'Y', suffix);
 
+  ########################################################
+  def __updateLastBackup(self, days = None):
+    if days is None:
+      last_backup = datetime.strptime( 
+        self.config['last_backup'], self.config['date_FMT']
+      );                                                                        # Convert last backup date string to datetime object
+      days = (datetime.utcnow() - last_backup).days;                      # Compute days since last backp
+      self.log.info( 'Days since last backup: {}'.format(days) );
+    self.config['days_since_last_backup'] = days;                       # Update days since last backup
+    utils.saveConfig( self.config );                                          # Update config settings
+ 
 # If run from command line
 if __name__ == "__main__":
   inst = rsyncBackup();

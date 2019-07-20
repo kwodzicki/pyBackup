@@ -25,12 +25,12 @@ _desktop  = os.path.join( _home, 'Desktop' );
 
 #############################################
 class pyBackupSettings( rsyncBackup, QMainWindow ):
-  statusSignal = QtCore.pyqtSignal(str);
-  pBarSignal   = QtCore.pyqtSignal(int);
-  pBarTxtSignal= QtCore.pyqtSignal(bool);
+  statusSignal  = QtCore.pyqtSignal(str);
+  butTxtSignal  = QtCore.pyqtSignal(str)
+  pBarSignal    = QtCore.pyqtSignal(int);
+  pBarTxtSignal = QtCore.pyqtSignal(bool);
   def __init__(self, *args, **kwargs):
     super().__init__( *args, **kwargs );                                        # Initialize the base class
-    self.log = logging.getLogger( __name__ )
     self.setWindowTitle('pyBackup');                                            # Set the window title
     self.backupDisk    = None;                                                  # Set attribute for destination data directory to None
     self.dst_dirFull   = None;                                                  # Set attribute for destination data directory to None
@@ -41,7 +41,9 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
     self._running      = False;
     self.is_root       = os.geteuid() == 0;                                     # Determine if running as root
     self.backupThread  = None;
+    self.monitorThread = None
     self.initUI();                                                              # Run method to initialize user interface
+
   ##############################################################################
   def initUI(self):
     '''
@@ -84,6 +86,7 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
     # Backup now button
     self.backupButton   = QPushButton('Backup now!');                           # Initialize button for selecting the destination directory
     self.backupButton.clicked.connect(   self.backup   );                       # Set method to run when the destination button is clicked
+    self.butTxtSignal.connect( self.backupButton.setText )
 
     layout = QVBoxLayout();                                                       # Initialize grid layout
     
@@ -100,6 +103,7 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
     self.setCentralWidget(centralWidget);                                       # Set the central widget of the base class to the main widget
     
     self.show( );                                                               # Show the main widget
+  
   ##############################################################################
   def select_dest(self, *args):
     '''
@@ -124,9 +128,6 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
       self.destPath.show()                                                      # Show the destSet icon
 
   ##############################################################################
-  def cancel(self):
-    super().cancel();
-  ##############################################################################
   def backup(self):
     '''
     Purpose:
@@ -138,27 +139,23 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
       disabledMessage().exec_();                                                # Display a dialog saying cannot do unles root
       return;
     if not self.backupThread:                                                   # If there is NOT a backup thread running
-      self.backupButton.setText( 'Cancel Backup' );
-      self.backupThread = Thread( target = self._backupThread );                # Initialize new thread
+      self.backupThread  = Thread( target = super().backup      )               # Initialize new thread
+      self.monitorThread = Thread( target = self._monitorStatus )
       self.backupThread.start();                                                # Start the thread
+      self.monitorThread.start()
     else:
-      self.cancel();
-      self.backupButton.setText( 'Backup now!' );
-  ##############################################################################
-  def _backupThread(self):
-    self.statusSignal.emit( self.statusFMT.format('Backing up') );              # Set status
-    thread = Thread( target = super().backup );                                 # Initialize thread for actual backup
-    thread.start();                                                             # Start backing up
-    self.pBarTxtSignal.emit(True);
-    while thread.is_alive():                                                    # While the thread is running
-      self.statusSignal.emit( self.statusFMT.format( self.statusTXT) );         # Update backup status
-      self.pBarSignal.emit(   int( self.progress ) );                           # Update progress bar
-      time.sleep(1.0);                                                          # Sleep for one second
-    time.sleep(2.0);                                                            # Sleep for 2 seconds
-    self.statusSignal.emit( self.statusFMT.format('') );                        # Update backup status
-    self.backupThread = None;                                                   # Set backup thread to None
-    self.pBarTxtSignal.emit(False);
-    self.pBarSignal.emit( 0 );
+    self.statusSignal.emit( self.statusFMT.format('Backing up') )
+    self.pBarTxtSignal.emit(True)
+    while self.backupThread.is_alive():
+      self.statusSignal.emit( self.statusFMT.format( self.statusTXT ) )
+      self.pBarSignal.emit(   int( self.progress ) )
+      time.sleep(1.0);
+    time.sleep(2.0)
+    self.statusSignal.emit( self.statusFMT.format('') )
+    self.pBarTxtSignal.emit( False )
+    self.pBarSignal.emit( 0 )
+    self.backupButton.setText( 'Backup now!' );
+
   ##############################################################################
   def autoBackup(self):
     if not self.is_root:                                                        # If not running as root
@@ -181,3 +178,9 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
           my_cron.write();
           break;
     utils.saveConfig( self.config );                                            # Update config file
+
+  ##############################################################################
+  def closeEvent(self, event):
+    self.cancel()
+    self.log.info('Quitting')
+    event.accept()
