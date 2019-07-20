@@ -6,7 +6,7 @@ from setuptools.command.install import install
 pkg_name = "pyBackup";
 pkg_desc = "A program for OS X Time Machine like backups";
 pkg_url  = "https://github.com/kwodzicki/pyBackup";
-pkg_vrs  = "0.0.20";
+pkg_vrs  = "0.0.21";
 
 tmp_config = '.{}_tmp.json'.format(pkg_name);                                   # Temporary config file; required when uninstall before install
 tmp_config = os.path.join( os.path.expanduser( "~" ), tmp_config );             # Temporary config file; required when uninstall before install
