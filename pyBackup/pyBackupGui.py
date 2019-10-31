@@ -25,10 +25,11 @@ _desktop  = os.path.join( _home, 'Desktop' );
 
 #############################################
 class pyBackupSettings( rsyncBackup, QMainWindow ):
-  statusSignal  = QtCore.pyqtSignal(str);
-  butTxtSignal  = QtCore.pyqtSignal(str)
-  pBarSignal    = QtCore.pyqtSignal(int);
-  pBarTxtSignal = QtCore.pyqtSignal(bool);
+  statusSignal    = QtCore.pyqtSignal(str);
+  butTxtSignal    = QtCore.pyqtSignal(str)
+  lastLabelSignal = QtCore.pyqtSignal(str)
+  pBarSignal      = QtCore.pyqtSignal(int);
+  pBarTxtSignal   = QtCore.pyqtSignal(bool);
   def __init__(self, *args, **kwargs):
     super().__init__( *args, **kwargs );                                        # Initialize the base class
     self.setWindowTitle('pyBackup');                                            # Set the window title
@@ -67,7 +68,8 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
       );
     self.lastLabel    = QLabel( txt );
     self.statusLabel  = QLabel( self.statusFMT.format('') );
-    self.statusSignal.connect( self.statusLabel.setText );                      # Connect this signal to setText method of statusLabel
+    self.lastLabelSignal.connect( self.lastLabel.setText );                     # Connect this signal to setText method of statusLabel
+    self.statusSignal.connect(    self.statusLabel.setText );                   # Connect this signal to setText method of statusLabel
     
     # Progress bar
     self.pBar         = QProgressBar()
@@ -144,17 +146,31 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
       self.backupThread.start();                                                # Start the thread
       self.monitorThread.start()
     else:
+      self.cancel()
+      self.backupThread = None
+
+  ##############################################################################
+  def _monitorStatus(self, *args, **kwargs):
+    self.butTxtSignal.emit( 'Cancel' )
     self.statusSignal.emit( self.statusFMT.format('Backing up') )
     self.pBarTxtSignal.emit(True)
-    while self.backupThread.is_alive():
+
+    while self.backupThread and self.backupThread.is_alive():
       self.statusSignal.emit( self.statusFMT.format( self.statusTXT ) )
       self.pBarSignal.emit(   int( self.progress ) )
       time.sleep(1.0);
+
     time.sleep(2.0)
+    if (self.rsyncStatus == 0): 
+      self.lastLabelSignal.emit( '0 days ago' )
+    else:
+      self.lastLabelSignal.emit( 'Failed!' )
+
     self.statusSignal.emit( self.statusFMT.format('') )
     self.pBarTxtSignal.emit( False )
     self.pBarSignal.emit( 0 )
-    self.backupButton.setText( 'Backup now!' );
+    self.butTxtSignal.emit( 'Backup now!' )
+    self.backupThread = None
 
   ##############################################################################
   def autoBackup(self):

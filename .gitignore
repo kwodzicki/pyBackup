@@ -1,5 +1,6 @@
 .DS_Store
 *.pptx
+*.swp
 version.txt
 # Following is from
 # https://github.com/github/gitignore/blob/master/Python.gitignore

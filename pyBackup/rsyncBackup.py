@@ -1,7 +1,7 @@
 import logging;
 from logging.handlers import RotatingFileHandler;
 
-import os, sys, shutil, re, signal;
+import os, sys, time, shutil, re, signal;
 from datetime import datetime;
 from subprocess import Popen, PIPE, STDOUT, DEVNULL;
 
@@ -41,6 +41,7 @@ class rsyncBackup( object ):
     self.progress    = 0.0;
     self.lock_file   = '/tmp/pyBackup.lock'
     self.statusTXT   = '';
+    self.rsyncStatus = -1;
     self.__cancel    = False;
     for sig in [signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGQUIT]:
       signal.signal(sig, self.cancel);
@@ -126,11 +127,11 @@ class rsyncBackup( object ):
       return 0;
 
     self.__removeDirs( );
-    status = self.__transfer( cmd );
-    if (status not in rsync_errors) and (not self.__cancel):                    # If no bad error has ben returned from rsync AND backup has NOT been canceled
+    self.rsyncStatus = self.__transfer( cmd );
+    if (self.rsyncStatus not in rsync_errors) and (not self.__cancel):          # If no bad error has ben returned from rsync AND backup has NOT been canceled
       self.log.info( 'Moving : {} ---> {}'.format(self.prog_dir, self.dst_dir ) )
       os.rename(  self.prog_dir, self.dst_dir );                                # Move the .inprogress directory to normal name
-      if os.path.isfile( self.latest_dir):
+      if os.path.exists( self.latest_dir):
         os.remove(  self.latest_dir );                                          # Delete the 'Latest' link
       os.symlink( self.dst_dir, self.latest_dir );                              # Create 'Latest' link pointed at newest backup
       self.config['backup_size'] += self.backup_size;
@@ -139,10 +140,12 @@ class rsyncBackup( object ):
       utils.saveConfig( self.config );                                          # Update the config file
       self.__cleanUp();
       self.statusTXT   = 'Finished'
+      self.rsyncStatus = 0
       return 0
-    elif (status != 0):
+    elif (self.rsyncStatus != 0):
       self.log.critical('Backup failed! Return code : {}'.format(status) )
     self.__removeLock();
+    self.rsyncStatus = 1
     return 1
   
   ##############################################################################
@@ -237,6 +240,9 @@ class rsyncBackup( object ):
     else:                                                                       # Else
       self.log.debug("'Latest' link either does not exist or destination not found!" )
       return None;                                                              # Return None value
+    if not os.path.isabs( link_dir ):
+      link_dir = os.path.realpath( os.path.join( self.backup_dir, link_dir ) )
+
     self.log.debug('Latest dir : {}'.format( link_dir ) )
     return link_dir;                                                            # Return link_dir
 
