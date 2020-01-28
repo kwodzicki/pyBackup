@@ -1,12 +1,17 @@
 #!/usr/bin/env python
-import sys, os, importlib, json;
-from setuptools import setup, find_packages;
+import sys, os, importlib, site, json
+from setuptools import setup, find_packages
 from setuptools.command.install import install
+from distutils.util import convert_path
 
-pkg_name = "pyBackup";
-pkg_desc = "A program for OS X Time Machine like backups";
-pkg_url  = "https://github.com/kwodzicki/pyBackup";
-pkg_vrs  = "0.0.22";
+pkg_name = "pyBackup"
+pkg_desc = "A program for OS X Time Machine like backups"
+pkg_url  = "https://github.com/kwodzicki/pyBackup"
+
+main_ns  = {}
+ver_path = convert_path( "{}/version.py".format(pkg_name) )
+with open(ver_path) as ver_file:
+  exec(ver_file.read(), main_ns)
 
 tmp_config = '.{}_tmp.json'.format(pkg_name);                                   # Temporary config file; required when uninstall before install
 tmp_config = os.path.join( os.path.expanduser( "~" ), tmp_config );             # Temporary config file; required when uninstall before install
@@ -22,6 +27,10 @@ if pkg_info:                                                                    
         dst.write( src.read() );                                                # Copy data from old to temporary file
 
 class CustomInstall( install ):
+  def __init__(self, *args, **kwargs):
+    print( args[0].__dict__ )
+    super().__init__(*args, **kwargs)
+
   def _post_install( self ):
     '''
     Purpose:
@@ -36,18 +45,19 @@ class CustomInstall( install ):
           print(p, pkg_name)
           return os.path.join(p, pkg_name);                                     # Return path to package
     install_path = find_module_path();                                          # Find the package path
-    new_config   = os.path.join( install_path, 'config.json' );                 # Set path to new config file
-    if os.path.isfile( tmp_config ):                                            # If the temprorary config file exists
-      if os.path.isfile( new_config ):                                          # If the new config file exists
-        with open( tmp_config, 'r' ) as fid:                                    # Open temporary file for reading
-          old_data = json.load( fid );                                          # Read data from temporary file
-        os.remove( tmp_config );                                                # Remove the temporary file
-        with open(new_config, 'r') as fid:                                      # Open the file for reading 
-          new_data = json.load( fid );                                          # Read in the new data
-        for key in old_data:                                                    # Iterate over the keys in the old_data
-          new_data[key] = old_data[key];                                        # Change new_data value at key to old_data value
-      with open(new_config, 'w') as fid:                                        # Open new config file for writing
-        json.dump( new_data, fid, indent = 4 );                                 # Write the new data
+    if install_path:
+      new_config   = os.path.join( install_path, 'config.json' );                 # Set path to new config file
+      if os.path.isfile( tmp_config ):                                            # If the temprorary config file exists
+        if os.path.isfile( new_config ):                                          # If the new config file exists
+          with open( tmp_config, 'r' ) as fid:                                    # Open temporary file for reading
+            old_data = json.load( fid );                                          # Read data from temporary file
+          os.remove( tmp_config );                                                # Remove the temporary file
+          with open(new_config, 'r') as fid:                                      # Open the file for reading 
+            new_data = json.load( fid );                                          # Read in the new data
+          for key in old_data:                                                    # Iterate over the keys in the old_data
+            new_data[key] = old_data[key];                                        # Change new_data value at key to old_data value
+        with open(new_config, 'w') as fid:                                        # Open new config file for writing
+          json.dump( new_data, fid, indent = 4 );                                 # Write the new data
   def run( self ):
     install.run( self );
     self._post_install();
@@ -59,7 +69,7 @@ setup(
   url                  = pkg_url,
   author               = "Kyle R. Wodzicki",
   author_email         = "krwodzicki@gmail.com",
-  version              = pkg_vrs,
+  version              = main_ns['__version__'],
   packages             = find_packages(),
   install_requires     = ['PyQt5', 'python-crontab'],
   scripts              = ['bin/pyBackup'],

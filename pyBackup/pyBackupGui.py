@@ -16,6 +16,7 @@ class disabledMessage( QMessageBox ):
   def check(self):
     return self.clickedButton() == self.accept;
 
+from pyBackup.version import __version__
 from pyBackup.rsyncBackup import rsyncBackup;
 from pyBackup import utils;
 
@@ -99,6 +100,7 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
     layout.addWidget( self.pBar );
     layout.addWidget( self.autoButton );                                        # Place a widget in the grid
     layout.addWidget( self.backupButton );                                      # Place a widget in the grid
+    layout.addWidget( QLabel( 'version {}'.format(__version__) ) )
 
     centralWidget = QWidget();                                                  # Create a main widget
     centralWidget.setLayout( layout );                                            # Set the main widget's layout to the grid

@@ -143,7 +143,7 @@ class rsyncBackup( object ):
       self.rsyncStatus = 0
       return 0
     elif (self.rsyncStatus != 0):
-      self.log.critical('Backup failed! Return code : {}'.format(status) )
+      self.log.critical('Backup failed! Return code : {}'.format(self.rsyncStatus) )
     self.__removeLock();
     self.rsyncStatus = 1
     return 1
