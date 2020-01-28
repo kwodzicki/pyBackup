@@ -164,7 +164,7 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
 
     time.sleep(2.0)
     if (self.rsyncStatus == 0): 
-      self.lastLabelSignal.emit( '0 days ago' )
+      self.lastLabelSignal.emit( self.lastBackupFMT.format('0 days ago') )
     else:
       self.lastLabelSignal.emit( 'Failed!' )
 
