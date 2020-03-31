@@ -7,10 +7,23 @@ from subprocess import Popen, PIPE, STDOUT, DEVNULL;
 
 from . import LOGDIR, utils
 
+LINESEP      = str.encode( os.linesep )
+CARRET       = str.encode( '\r' )
+BUFFER       = 1024 * 4 
 rsync_errors = [1, 2, 3, 4, 5, 6, 10, 11, 12, 13, 14, 20, 21, 22, 25, 30, 35]
 part_regex   = re.compile( r'\s*((?:\d{1,3},?)+)\s+(?:\d{1,3}\%)');
 trans_regex  = re.compile( r'\s*((?:\d{1,3},?)+)\s+(?:\d{1,3}\%).+\(.+\)');
 size_regex   = re.compile( r'Total transferred file size:\s((?:\d{1,3},?)+)\sbytes' )
+
+def readLines( pipe, previous = None ):
+  data = pipe.read(BUFFER).replace(CARRET, LINESEP)
+  if previous: data = previous + data
+  try:
+    index = data.index( LINESEP )
+  except:
+    return None, data
+  else:
+    return data[:index+1], data[index+1:]
 
 class rsyncBackup( object ):
   def __init__(self, src_dir = '/', loglevel = logging.DEBUG):
@@ -171,16 +184,21 @@ class rsyncBackup( object ):
   def __getTransferSize(self, cmd):
     self.statusTXT = 'Calculating backup size'
     proc = Popen( cmd + ['-n', self.src_dir, self.prog_dir], 
-      stdout = PIPE, stderr = STDOUT, 
-      universal_newlines = True );
-    line = proc.stdout.readline();
-    while line and (not self.__cancel):
-      trans_size = size_regex.findall( line );
-      if len(trans_size) == 1:
-        backup_size = int( trans_size[0].replace(',','') );
-        self.log.info( 'Backup size: {}'.format(backup_size) )
-        break;
-      line = proc.stdout.readline();
+      stdout = PIPE, stderr = STDOUT) 
+
+    lines = proc.stdout.read( BUFFER ).splitlines(True)
+    while lines and (not self.__cancel):
+      line = lines.pop(0)
+      if not line.endswith(LINESEP):                                            # If line not end in line separater
+        lines = line + b''.join(lines) + proc.stdout.read(BUFFER)               # Join lines list on '', prepend line, and append another read
+        lines = lines.splitlines(True)
+      else:
+        line       = line.decode()
+        trans_size = size_regex.findall( line );
+        if len(trans_size) == 1:
+          backup_size = int( trans_size[0].replace(',','') );
+          self.log.info( 'Backup size: {}'.format(backup_size) )
+          break
     if self.__cancel:
       proc.terminate();
       backup_size = None;
@@ -192,19 +210,20 @@ class rsyncBackup( object ):
     self.statusTXT = 'Backing up {}'.format(self.__size_fmt(self.backup_size));
     cmd  = cmd + ['--progress', self.src_dir, self.prog_dir]
     self.log.info( 'Full rsync cmd : {}'.format(cmd) )
-    proc = Popen( cmd, stdout=PIPE, stderr=STDOUT, universal_newlines=True )    # Run rsync command
+    proc = Popen( cmd, stdout=PIPE, stderr=STDOUT )    # Run rsync command
     transfered = 0;                                                             # Initialize total transferd size
-    line = proc.stdout.readline();                                              # Read first line form stdout
-    while line and (not self.__cancel):                                         # While line is NOT empty
-      trans_size = part_regex.findall( line );                                  # Try to find total size of transfered file
-      if len(trans_size) == 0 and (line != '\n'):                               # If no number found, assume it is a file path
-        self.log.debug( line.rstrip() );                                         # Log the file being backed up
-      elif len(trans_size) == 1:                                                # If only one number found
-        trans_size    = int( trans_size[0].replace(',','') );                   # Convert file size to integer
-        self.progress = 100 * (transfered + trans_size) / self.backup_size;     # Set progress to fraction of transfered file size
-        if '(' in line: transfered += trans_size;                               # If there is a '(' in file, it means file finished transfering
-      line = proc.stdout.readline();                                            # Get another line from rsync command
-      time.sleep(0.01)
+    line, remain = readLines( proc.stdout )                                     # Read first line form stdout
+    while (line or remain) and (not self.__cancel):                             # While line is NOT empty
+      if line and line.endswith(LINESEP):                                       # If line not end in line separater
+          line = line.decode()
+          trans_size = part_regex.findall( line )                               # Try to find total size of transfered file
+          if len(trans_size) == 0 and (line != os.linesep):                     # If no number found, assume it is a file path
+            self.log.debug( line.rstrip() )                                     # Log the file being backed up
+          elif len(trans_size) == 1:                                            # If only one number found
+            trans_size    = int( trans_size[0].replace(',','') )                # Convert file size to integer
+            self.progress = 100 * (transfered + trans_size) / self.backup_size  # Set progress to fraction of transfered file size
+            if '(' in line: transfered += trans_size;                           # If there is a '(' in file, it means file finished transfering
+      line, remain = readLines( proc.stdout, previous = remain )      
 
     self.progress = 100;                                                        # Ensure that percentage is 100
     if self.__cancel:
