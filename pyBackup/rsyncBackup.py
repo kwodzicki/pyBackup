@@ -5,7 +5,7 @@ import os, sys, time, shutil, re, signal;
 from datetime import datetime;
 from subprocess import Popen, PIPE, STDOUT, DEVNULL;
 
-from pyBackup import utils;
+from . import LOGDIR, utils
 
 rsync_errors = [1, 2, 3, 4, 5, 6, 10, 11, 12, 13, 14, 20, 21, 22, 25, 30, 35]
 part_regex   = re.compile( r'\s*((?:\d{1,3},?)+)\s+(?:\d{1,3}\%)');
@@ -17,7 +17,7 @@ class rsyncBackup( object ):
     super().__init__();
     self.log         = logging.getLogger(__name__);
     self.loglevel    = loglevel;
-    self.log_file    = os.path.join(os.path.expanduser('~'), 'pyBackup_rsync.log')
+    self.log_file    = os.path.join(LOGDIR, 'pyBackup_rsync.log')
     rotFile  = RotatingFileHandler(self.log_file,
       maxBytes = 10 * 1024**2, backupCount = 4, encoding = 'utf8' );            # Initialize rotating file handler
     rotFile.setFormatter( logging.Formatter( '%(asctime)s [%(levelname)s] %(message)s' ) )
@@ -25,7 +25,6 @@ class rsyncBackup( object ):
     self.log.addHandler( rotFile );                                             # Add file handler to logger
 
     self.cmd         = ['rsync', '-a', '--stats'];                              # Base command for rsync
-    self.config      = utils.loadConfig();                                      # Load configuration file
     self.__updateLastBackup()
     self.mountPoint  = None;                                                    # Get the backup disk mount point
     self.backup_dir  = None;                                                    # Full path to top-level backup directory
@@ -82,13 +81,13 @@ class rsyncBackup( object ):
       open( self.lock_file, 'w' ).close();                                      # Create lock file
  
     # Check backup disk set
-    if not self.config['disk_UUID']:                                            # If the backup disk has not been setup yet
+    if not utils.CONFIG['disk_UUID']:                                            # If the backup disk has not been setup yet
       self.log.error( 'Backup disk NOT set!' )
       self.__removeLock();
       return 1
 
     # Check backup disk mounted
-    self.mountPoint = utils.get_MountPoint( self.config['disk_UUID'] );         # Get the backup disk mount point
+    self.mountPoint = utils.get_MountPoint( utils.CONFIG['disk_UUID'] );         # Get the backup disk mount point
     if not self.mountPoint:                                                     # If no mount point found, i.e, not mounted
       self.log.info( 'Backup disk NOT mounted!' )
       self.__removeLock();
@@ -97,15 +96,15 @@ class rsyncBackup( object ):
     ## Exclude directories
     cmd = self.cmd + [ '--exclude={}'.format( self.mountPoint) ];               # Append src directory path as exclude
     # Backing up!
-    self.backup_dir  = os.path.join(self.mountPoint, self.config['backup_dir']);# Full path to top-level backup directory
-    for dir in self.config['exclude']:
+    self.backup_dir  = os.path.join(self.mountPoint, utils.CONFIG['backup_dir']);# Full path to top-level backup directory
+    for dir in utils.CONFIG['exclude']:
       cmd.append( '--exclude={}'.format( dir ) );      
-    for dir in self.config['user_exclude']: 
+    for dir in utils.CONFIG['user_exclude']: 
       cmd.append( '--exclude={}'.format( dir ) );
 
     self.latest_dir  = os.path.join( self.backup_dir, 'Latest' );               # Set the Latest link path in the backup directory
     date             = datetime.utcnow();                                       # Get current UTC date
-    date_str         = date.strftime( self.config['date_FMT']    );             # Format date to string
+    date_str         = date.strftime( utils.CONFIG['date_FMT']    );             # Format date to string
 
     self.__getDirList( self.backup_dir );                                       # Get list of vaild backup directories
     self.dst_dir  = os.path.join(  self.backup_dir, date_str );                 # Set up destination directory
@@ -134,10 +133,10 @@ class rsyncBackup( object ):
       if os.path.exists( self.latest_dir):
         os.remove(  self.latest_dir );                                          # Delete the 'Latest' link
       os.symlink( self.dst_dir, self.latest_dir );                              # Create 'Latest' link pointed at newest backup
-      self.config['backup_size'] += self.backup_size;
-      self.config['last_backup']  = date_str;                                   # Update the last backup date string
-      self.config['days_since_last_backup'] = 0;                                # Update days since last backup
-      utils.saveConfig( self.config );                                          # Update the config file
+      utils.CONFIG['backup_size'] += self.backup_size;
+      utils.CONFIG['last_backup']  = date_str;                                  # Update the last backup date string
+      utils.CONFIG['days_since_last_backup'] = 0;                               # Update days since last backup
+      utils.CONFIG.saveConfig( )                                                # Update the config file
       self.__cleanUp();
       self.statusTXT   = 'Finished'
       self.rsyncStatus = 0
@@ -263,14 +262,14 @@ class rsyncBackup( object ):
       Returns the size of files deleted.
     '''
     def localRemove():
-      used = self.config['backup_size']+self.backup_size;                       # Compute diskspace used by current backups and current one
-      while used > self.config['disk_size']:                                    # While the size of the current backup plus all other backups is larger than the drive size
+      used = utils.CONFIG['backup_size']+self.backup_size;                       # Compute diskspace used by current backups and current one
+      while used > utils.CONFIG['disk_size']:                                    # While the size of the current backup plus all other backups is larger than the drive size
         for root, dirs, files in os.walk( self.backups['full'].pop(0), topdown=False ):# Walk the directory tree
           for file in files:                                                    # Iterate over all files
             if self.__cancel: return;                                           # If __cancel is set, return
             path = os.path.join( root, file );                                  # Build the full file path
             info = os.lstat( path );                                            # Get information about file
-            if info.st_nlink == 1: self.config['backup_size'] -= info.st_size;  # If file has only one (1) inode link, then subtract file size from config backup size
+            if info.st_nlink == 1: utils.CONFIG['backup_size'] -= info.st_size;  # If file has only one (1) inode link, then subtract file size from config backup size
             os.remove( path );                                                  # Delete the file
           for dir in dirs:                                                      # Iterate over directories in root path
             if self.__cancel: return;                                           # If __cancel is set, return
@@ -280,11 +279,11 @@ class rsyncBackup( object ):
             except:                                                             # on exception
               os.remove( path );                                                # Try to remove file; may be symlink
         os.rmdir( dirPath );                                                    # Remove the top level (input) directory
-        used = self.config['backup_size']+self.backup_size;                     # Compute diskspace used by current backups and current one      
+        used = utils.CONFIG['backup_size']+self.backup_size;                     # Compute diskspace used by current backups and current one      
         self.log.debug( 'Deleted: {}'.format(dirPath) )
     self.statusTXT = 'Deleting old backups'
     localRemove();
-    utils.saveConfig( self.config );                                            # Update the configuration file
+    utils.CONFIG.saveConfig(  );                                            # Update the configuration file
 
   ########################################################
   def __size_fmt(self, num, suffix='B'):
@@ -305,10 +304,10 @@ class rsyncBackup( object ):
 
   ########################################################
   def __updateLastBackup(self, days = None):
-    last_backup = self.config.get('last_backup', '')
+    last_backup = utils.CONFIG.get('last_backup', '')
     if days is None and last_backup != '':
-      last_backup = datetime.strptime( last_backup, self.config['date_FMT'] )   # Convert last backup date string to datetime object
+      last_backup = datetime.strptime( last_backup, utils.CONFIG['date_FMT'] )   # Convert last backup date string to datetime object
       days = (datetime.utcnow() - last_backup).days                             # Compute days since last backp
       self.log.info( 'Days since last backup: {}'.format(days) )
-    self.config['days_since_last_backup'] = days;                               # Update days since last backup
-    utils.saveConfig( self.config );                                          # Update config settings
+    utils.CONFIG['days_since_last_backup'] = days;                               # Update days since last backup
+    utils.CONFIG.saveConfig( );                                          # Update config settings

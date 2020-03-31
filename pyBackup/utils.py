@@ -1,20 +1,36 @@
-import os, sys, json;
-from subprocess import check_output;
+import os, sys, shutil, json
+from subprocess import check_output
 
-_dir        = os.path.dirname( os.path.realpath(__file__) );
-_configFile = os.path.join( _dir, 'config.json' );
-DISKUTIL    = ['diskutil', 'info'] 
-def loadConfig():
-  with open(_configFile, 'r') as fid:
-    config = json.load( fid );
-  if not config['disk_UUID']:                                                   # If the disk UUID is NOT defined
-    host = check_output( 'hostname' ).decode().rstrip();
-    config['backup_dir'] = os.path.join( config['backup_dir'], host )
-  return config;
+from . import CONFIGFILE
 
-def saveConfig( config ):
-    with open(_configFile, 'w') as fid:
-      json.dump( config, fid, indent = 4 );
+DISKUTIL   = ['diskutil', 'info'] 
+
+class Config( object ):
+  def __init__(self):
+    self.file  = CONFIGFILE 
+    self._data = {}
+    self.loadConfig()
+  def __getitem__(self, key):
+    return self._data.get(key, None)
+  def __setitem__(self, key, val):
+    self._data[key] = val
+  def keys(self):
+    return self._data.keys()
+  def get(self, *args, **kwargs):
+    return self._data.get(*args, **kwargs)
+  def pop(self, *args, **kwargs):
+    return self._data.pop(*args, **kwargs)
+  def loadConfig(self):
+    with open(self.file, 'r') as fid:
+      self._data.update( json.load( fid ) )
+    if not self._data['disk_UUID']:                                                   # If the disk UUID is NOT defined
+      host = check_output( 'hostname' ).decode().rstrip()
+      self._data['backup_dir'] = os.path.join( self._data['backup_dir'], host )
+  def saveConfig(self):
+      with open(self.file, 'w') as fid:
+        json.dump( self._data, fid, indent = 4 );
+
+CONFIG = Config()
 
 def diskutil(val):                                                                                                                                                                                       
   data = {}  
@@ -23,7 +39,6 @@ def diskutil(val):
       lines = check_output( DISKUTIL+[val] ).decode().splitlines() 
     except:
       return data
-    
     for line in lines:
       try:
         key, val = line.split(':')
@@ -79,6 +94,23 @@ def get_MountPoint( UUID ):
   elif 'darwin' in sys.platform:
     data = diskutil( UUID )
     return data.get('Mount Point', None)
-
   return None                                                                   # Not found, so return None
 
+def setBackupDir( path ):
+  '''
+  Purpose:
+    A function to set the backup directory information 
+    given its mount point
+  Inputs:
+    path : Path to mount point
+  Outputs:
+    Returns True if set information, False otherwise
+  '''
+  UUID = get_UUID( path )
+  if UUID and os.path.isdir( path ):
+    total, used, free = shutil.disk_usage( path )
+    CONFIG['disk_size'] = int(free * 0.9)
+    CONFIG['disk_UUID'] = UUID
+    CONFIG.saveConfig()
+    return True
+  return False

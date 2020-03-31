@@ -36,7 +36,6 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
     self.setWindowTitle('pyBackup');                                            # Set the window title
     self.backupDisk    = None;                                                  # Set attribute for destination data directory to None
     self.dst_dirFull   = None;                                                  # Set attribute for destination data directory to None
-    self.config        = utils.loadConfig();
     self.autoBackupFMT = 'Automatic Backup: {}';                                # Formatter for automatic backup
     self.lastBackupFMT = 'Last Backup: {}';
     self.statusFMT     = 'Status: {}';
@@ -55,17 +54,17 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
     self.destPath     = QLineEdit('');                                          # Initialize entry widget that will display the destination directory path
     self.destPath.setEnabled( False );                                          # Disable the destPath widget; that way no one can manually edit it
     self.destButton.clicked.connect(   self.select_dest   );                    # Set method to run when the destination button is clicked
-    if self.config['disk_UUID']:                                                # If the UUID is set in the config dictionary
-      self.backupDisk = utils.get_MountPoint( self.config['disk_UUID'] );
+    if utils.CONFIG['disk_UUID']:                                                # If the UUID is set in the config dictionary
+      self.backupDisk = utils.get_MountPoint( utils.CONFIG['disk_UUID'] );
       self.destPath.setText( self.backupDisk );
     self.destPath.show();
     
     # Text labels
-    if self.config['days_since_last_backup'] == "":
+    if utils.CONFIG['days_since_last_backup'] == "":
       txt = self.lastBackupFMT.format( 'Never' );
     else:
       txt = self.lastBackupFMT.format( 
-        '{} days ago'.format( self.config['days_since_last_backup'] )
+        '{} days ago'.format( utils.CONFIG['days_since_last_backup'] )
       );
     self.lastLabel    = QLabel( txt );
     self.statusLabel  = QLabel( self.statusFMT.format('') );
@@ -81,7 +80,7 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
     # Auto backup button
     self.autoButton   = QPushButton();                                          # Initialize button for selecting the destination directory
     self.autoButton.clicked.connect( self.autoBackup );                         # Set method to run when the destination button is clicked
-    if self.config['auto_backup']:
+    if utils.CONFIG['auto_backup']:
       self.autoButton.setText( self.autoBackupFMT.format('Enabled') )
     else:
       self.autoButton.setText( self.autoBackupFMT.format('Disabled') )
@@ -121,12 +120,7 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
     if self.backupDisk is None:                                                 # If the dst_dir attribute is None
       self.log.warning( 'No destination directory set' )                        # Log a warning
     else:                                                                       # Else
-      UUID = utils.get_UUID( backupDisk );                                      # Get the disk UUID
-      if UUID:                                                                  # If valud UUID
-        total, used, free = shutil.disk_usage( self.backupDisk );               # Get disk information
-        self.config['disk_size'] = int( free * 0.9 );                           # Set disk size to 90% of the total disk size
-        self.config['disk_UUID'] = UUID;                                        # Set disk_UUID in the config file
-        utils.saveConfig( self.config );                                        # Update the config data
+      utils.setBackupDir( backupDisk )
 
       self.destPath.setText( self.backupDisk );                                 # Show the destPath label
       self.destPath.show()                                                      # Show the destSet icon
@@ -180,22 +174,22 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
       disabledMessage().exec_();                                                # Display a dialog saying cannot do unles root
       return;
     my_cron = CronTab( user = os.environ['LOGNAME'] );
-    self.config['auto_backup'] = not self.config['auto_backup'];                # Set to opposit value
-    if self.config['auto_backup']:
+    utils.CONFIG['auto_backup'] = not utils.CONFIG['auto_backup'];                # Set to opposit value
+    if utils.CONFIG['auto_backup']:
       self.autoButton.setText( self.autoBackupFMT.format('Enabled') )
-      cmd = os.path.join( utils._dir, self.config['cron_cmd'] );
+      cmd = os.path.join( utils._dir, utils.CONFIG['cron_cmd'] );
       cmd = "/usr/bin/env python3 {}".format( cmd )
-      job = my_cron.new( command = cmd, comment = self.config['cron_cmt'] )
+      job = my_cron.new( command = cmd, comment = utils.CONFIG['cron_cmt'] )
       job.every(1).hour();
       my_cron.write();
     else:
       self.autoButton.setText( self.autoBackupFMT.format('Disabled') )
       for job in my_cron:
-        if job.comment == self.config['cron_cmt']:
+        if job.comment == utils.CONFIG['cron_cmt']:
           my_cron.remove(job);
           my_cron.write();
           break;
-    utils.saveConfig( self.config );                                            # Update config file
+    utils.CONFIG.saveConfig( )                                            # Update config file
 
   ##############################################################################
   def closeEvent(self, event):
