@@ -72,7 +72,7 @@ setup(
   version              = main_ns['__version__'],
   packages             = find_packages(),
   install_requires     = ['PyQt5', 'python-crontab'],
-  scripts              = ['bin/pyBackup'],
+  scripts              = ['bin/pyBackup', 'bin/backupDir', 'bin/rsyncBackup'],
   package_data         = {pkg_name : ['config.json']},
   include_package_data = True,
   zip_safe             = False,
