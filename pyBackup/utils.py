@@ -18,13 +18,19 @@ def saveConfig( config ):
 
 def diskutil(val):                                                                                                                                                                                       
   data = {}  
-  for line in check_output( DISKUTIL+[val] ).decode().splitlines():
+  if isinstance(val, str) and val != '':
     try:
-      key, val = line.split(':')
+      lines = check_output( DISKUTIL+[val] ).decode().splitlines() 
     except:
-      pass
-    else:
-      data[ key.strip() ] = val.strip()
+      return data
+    
+    for line in lines:
+      try:
+        key, val = line.split(':')
+      except:
+        pass
+      else:
+        data[ key.strip() ] = val.strip()
   return data
 
 def get_UUID( mnt_point ):
