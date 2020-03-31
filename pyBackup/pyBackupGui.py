@@ -124,7 +124,7 @@ class pyBackupSettings( rsyncBackup, QMainWindow ):
       UUID = utils.get_UUID( backupDisk );                                      # Get the disk UUID
       if UUID:                                                                  # If valud UUID
         total, used, free = shutil.disk_usage( self.backupDisk );               # Get disk information
-        self.config['disk_size'] = int( total * 0.9 );                          # Set disk size to 90% of the total disk size
+        self.config['disk_size'] = int( free * 0.9 );                           # Set disk size to 90% of the total disk size
         self.config['disk_UUID'] = UUID;                                        # Set disk_UUID in the config file
         utils.saveConfig( self.config );                                        # Update the config data
 

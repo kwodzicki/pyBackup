@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+
+if __name__ == "__main__":
+  import os, shutil, argparse
+  from pyBackup import utils
+
+  parser = argparse.ArgumentParser(description="Display/set backup directory location")           # Set the description of t
+  parser.add_argument("--set", type = str, help = "Use to change backup location")
+
+  args = parser.parse_args()
+
+  config = utils.loadConfig()
+
+  if args.set is None:
+    disk = utils.get_MountPoint( config['disk_UUID'] )
+    if disk:
+      print( 'Backup location: {}'.format(disk) )
+    else:
+      print( 'No backup location set')
+  else:
+    UUID = utils.get_UUID( args.set )
+    if UUID and os.path.isdir( args.set ):
+      total, used, free = shutil.disk_usage( args.set )
+      config['disk_size'] = int(free * 0.9)
+      config['disk_UUID'] = UUID
+      utils.saveConfig( config )
+    else:
+      print( 'Could not set backup location! Is this a valid path : {}'.format(args.set) )
+

@@ -313,8 +313,3 @@ class rsyncBackup( object ):
       self.log.info( 'Days since last backup: {}'.format(days) );
     self.config['days_since_last_backup'] = days;                       # Update days since last backup
     utils.saveConfig( self.config );                                          # Update config settings
- 
-# If run from command line
-if __name__ == "__main__":
-  inst = rsyncBackup();
-  exit( inst.backup() );
