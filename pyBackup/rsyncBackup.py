@@ -305,7 +305,7 @@ class rsyncBackup( object ):
 
   ########################################################
   def __updateLastBackup(self, days = None):
-    last_backup = self.confg.get('last_backup', '')
+    last_backup = self.config.get('last_backup', '')
     if days is None and last_backup != '':
       last_backup = datetime.strptime( last_backup, self.config['date_FMT'] )   # Convert last backup date string to datetime object
       days = (datetime.utcnow() - last_backup).days                             # Compute days since last backp
